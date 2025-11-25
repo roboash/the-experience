@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Eye Chase — Platformer (Extended Level)</title>
+  <style>
+    :root{--bg:#071022;--ground:#0d2a3f;--player:#7afcff;--plat:#6ea8ff;--spike:#ff5b5b;--eye:#ff2a2a;--bounce:#7cff7a}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071022,#030717);color:#dff6ff;display:flex;align-items:center;justify-content:center}
+    .wrap{width:min(1024px,96vw);padding:18px}
+    .hud{display:flex;gap:12px;align-items:center;margin-bottom:8px}
+    button{background:#1b2a44;color:#dff6ff;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
+    .muted{color:#9fbff9;font-size:13px}
+    canvas{background:linear-gradient(180deg,#071228,#031021);display:block;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+    .overlay{position:absolute;left:0;right:0;text-align:center;color:#fff}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud">
+      <button id="startBtn">Start</button>
+      <button id="restartBtn">Restart</button>
+      <div class="muted">Move: A/D or ←→ • Jump: W / Up / Space • Tap controls supported</div>
+      <div style="flex:1"></div>
+      <div class="muted">Best: <span id="best">0</span></div>
+    </div>
+    <div style="position:relative">
+      <canvas id="c" width="1024" height="576" tabindex="0" aria-label="Platformer eye chase"></canvas>
+      <div id="msg" class="overlay" style="top:40%;font-size:28px;display:none">You Died — Double-click to restart</div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const startBtn = document.getElementById('startBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const msg = document.getElementById('msg');
+  const bestEl = document.getElementById('best');
+  let best = Number(localStorage.getItem('sawpf_best') || 0); bestEl.textContent = best;
+
+  // player
+  const player = { x:120, y:400, w:36, h:48, vx:0, vy:0, onGround:false };
+  let gravity = 0.9; // preserved from last working state (tweakable)
+  const moveSpeed = 3.0; // slightly slower for finer control
+  const jumpPower = -22; // negative (up)
+
+  // handcrafted long level (~+20000 px with challenging sections)
+  let platforms = [];
+  function makeLevel(){
+    platforms = [
+      // start safe area
+      {x:0, y:520, w:600, h:56},
+      {x:650, y:480, w:420, h:18},
+      {x:1100, y:450, w:380, h:18},
+      // a few medium jumps
+      {x:1500, y:500, w:360, h:18},
+      {x:1900, y:460, w:300, h:18},
+      {x:2300, y:430, w:260, h:18},
+      // checkpoint-ish long platform
+      {x:2600, y:520, w:800, h:18},
+      // moving-platform cluster area (will be referenced by movingPlatforms)
+      {x:3600, y:460, w:220, h:18},
+      {x:3900, y:360, w:160, h:18},
+      {x:4200, y:420, w:200, h:18},
+      // narrow jump gauntlet
+      {x:4600, y:520, w:140, h:18},
+      {x:4800, y:420, w:160, h:18},
+      {x:5000, y:360, w:120, h:18},
+      {x:5200, y:480, w:300, h:18},
+      // spike corridor
+      {x:5600, y:520, w:600, h:18},
+      // bounce pad arena
+      {x:6300, y:480, w:260, h:18},
+      {x:6600, y:440, w:180, h:18},
+      {x:6900, y:520, w:500, h:18},
+      // mid-level long stretch
+      {x:7500, y:480, w:900, h:18},
+      // rising platforms
+      {x:8500, y:460, w:220, h:18},
+      {x:8800, y:440, w:220, h:18},
+      {x:9100, y:420, w:220, h:18},
+      // big gap
+      {x:9500, y:520, w:380, h:18},
+      {x:10000, y:480, w:320, h:18},
+      // swinging axe area (we'll place the axe near here)
+      {x:14000, y:480, w:600, h:18},
+      // late-game tricky platforms
+      {x:15050, y:460, w:200, h:18},
+      {x:15300, y:420, w:220, h:18},
+      {x:15600, y:520, w:800, h:18},
+      // finish approach
+      {x:17000, y:480, w:1200, h:18},
+      {x:18400, y:520, w:1600, h:18},
+      {x:20200, y:520, w:2000, h:18}
+    ];
+  }
+
+  // spikes — handcrafted challenging placement
+  let spikes = [];
+  function placeInitialSpikes(){
+    spikes = [
+      {x:740, y:480-16, w:28, h:16},
+      {x:1180, y:450-16, w:28, h:16},
+      {x:1970, y:460-16, w:28, h:16},
+      {x:2350, y:430-16, w:28, h:16},
+      {x:4700, y:520-16, w:28, h:16},
+      {x:4860, y:420-16, w:28, h:16},
+      {x:5040, y:360-16, w:28, h:16},
+      {x:5720, y:520-16, w:28, h:16},
+      {x:5748, y:520-16, w:28, h:16},
+      {x:5776, y:520-16, w:28, h:16},
+      {x:6380, y:480-16, w:28, h:16},
+      {x:6650, y:440-16, w:28, h:16},
+      {x:9000, y:520-16, w:28, h:16},
+      {x:10100, y:480-16, w:28, h:16},
+      {x:14900, y:480-16, w:28, h:16},
+      {x:15250, y:420-16, w:28, h:16}
+    ];
+  }
+
+  // moving platforms (A3 mix horizontal+vertical)
+  let movingPlatforms = [
+    {x:3600, y:460, w:220, h:18, baseX:3600, baseY:460, type:'h', range:260, speed:0.0012},
+    {x:4200, y:420, w:200, h:18, baseX:4200, baseY:420, type:'v', range:90, speed:0.0014},
+    {x:8800, y:440, w:220, h:18, baseX:8800, baseY:440, type:'h', range:180, speed:0.0009}
+  ];
+
+  // bounce pads (D2 — strong bounce ~4x)
+  let bouncePads = [
+    {x:6360, y:480-8, w:40, h:8, strength:1.8},
+    {x:6640, y:440-8, w:40, h:8, strength:1.8},
+    {x:7550, y:480-8, w:40, h:8, strength:1.8}
+  ];
+
+  // swinging axes (I4 placement given earlier: 1 axis at 3600 medium)
+  let axes = [
+    {px:3600 + 110, py:360, len:160, speed:0.0015, arc:Math.PI*0.45}
+  ];
+
+  // eye (replaces saw)
+  const eye = { x:-300, y:520 - 44 + 6, r:44, speed:1.8, startChaseTime: null, goShown: null };
+
+  // state
+  let running = false; let dead = false; let lastTime = 0; let distance = 0;
+
+  // input
+  const keys = {left:false,right:false,jump:false};
+  function keyDown(e){ if(['ArrowLeft','KeyA'].includes(e.code)){ keys.left=true; } if(['ArrowRight','KeyD'].includes(e.code)){ keys.right=true; } if(['Space','ArrowUp','KeyW'].includes(e.code)){ keys.jump=true; } }
+  function keyUp(e){ if(['ArrowLeft','KeyA'].includes(e.code)){ keys.left=false; } if(['ArrowRight','KeyD'].includes(e.code)){ keys.right=false; } if(['Space','ArrowUp','KeyW'].includes(e.code)){ keys.jump=false; } }
+  window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp);
+
+  // pointer/touch
+  canvas.addEventListener('pointerdown', (e)=>{
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX-rect.left) * (canvas.width/rect.width);
+    if(e.pointerType === 'touch'){
+      if(x < W*0.33) keys.left = true; else if(x > W*0.66) keys.right = true; else keys.jump = true;
+    } else keys.jump = true;
+    if(dead){ reset(); start(); }
+  });
+  window.addEventListener('pointerup', ()=>{ keys.left=false; keys.right=false; keys.jump=false; });
+
+  // collisions helpers
+  function rectsCollide(a,b){ return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+  function circleRect(cx,cy,r,rx,ry,rw,rh){ const closestX = Math.max(rx, Math.min(cx, rx+rw)); const closestY = Math.max(ry, Math.min(cy, ry+rh)); const dx = cx-closestX; const dy = cy-closestY; return (dx*dx + dy*dy) < (r*r); }
+
+  function reset(){
+    running=false; dead=false; lastTime=0; distance=0; msg.style.display='none';
+    makeLevel(); placeInitialSpikes();
+    player.x=120; player.y=400; player.vx=0; player.vy=0; player.onGround=false;
+    // reset moving platforms base
+    for(const m of movingPlatforms){ m.x = m.baseX; m.y = m.baseY; }
+    // reset axes
+    for(const a of axes){ a.phase = 0; }
+    eye.x = -300; eye.y = platforms[0].y - eye.r + 6; eye.startChaseTime = null; eye.goShown = null;
+  }
+
+  function start(){ if(running) return; running=true; dead=false; lastTime = performance.now(); loop(lastTime); }
+
+  function hit(){ dead=true; running=false; msg.style.display='block'; if(Math.floor(distance) > best){ best = Math.floor(distance); localStorage.setItem('sawpf_best', best); bestEl.textContent = best; } }
+
+  // update
+  function update(dt){
+    // moving platforms
+    for(const m of movingPlatforms){
+      if(m.type === 'h'){
+        m.x = m.baseX + Math.sin(performance.now() * m.speed) * m.range;
+      } else {
+        m.y = m.baseY + Math.sin(performance.now() * m.speed) * m.range;
+      }
+    }
+
+    // input horizontal
+    let targetVx = 0;
+    if(keys.left) targetVx = -moveSpeed;
+    if(keys.right) targetVx = moveSpeed;
+    player.vx += (targetVx - player.vx) * 0.4; // quicker response, easier control
+
+    // jump
+    if(keys.jump && player.onGround){ player.vy = jumpPower; player.onGround = false; }
+
+    // physics
+    player.vy += gravity * (dt/16);
+    player.x += player.vx * (dt/16);
+    player.y += player.vy * (dt/16);
+
+    // world bounds
+    if(player.x < 0) player.x = 0;
+
+    // PLATFORM COLLISION (solid, non-lethal) — includes movingPlatforms
+    player.onGround = false;
+    const allPlatforms = platforms.concat(movingPlatforms.map(m=>({x:m.x,y:m.y,w:m.w,h:m.h}))); 
+    for(const p of allPlatforms){
+      if(rectsCollide(player, p)){
+        const playerLeft = player.x, playerRight = player.x + player.w, playerTop = player.y, playerBottom = player.y + player.h;
+        const platLeft = p.x, platRight = p.x + p.w, platTop = p.y, platBottom = p.y + p.h;
+        const overlapX = Math.min(playerRight, platRight) - Math.max(playerLeft, platLeft);
+        const overlapY = Math.min(playerBottom, platBottom) - Math.max(playerTop, platTop);
+        if(overlapY <= 0 || overlapX <= 0) continue;
+        // resolve on smallest axis
+        if(overlapY < overlapX){
+          // vertical resolution
+          const prevY = player.y - player.vy * (dt/16);
+          const prevBottom = prevY + player.h;
+          if(prevBottom <= p.y + 2){ // landed on top
+            player.y = p.y - player.h; player.vy = 0; player.onGround = true;
+          } else {
+            // hit from below
+            player.y = p.y + p.h + 0.1; player.vy = 0;
+          }
+        } else {
+          // horizontal resolution
+          if(player.x + player.w/2 < p.x + p.w/2) player.x = p.x - player.w - 0.1; else player.x = p.x + p.w + 0.1;
+          player.vx = 0;
+        }
+      }
+    }
+
+    // bounce pads (D2 strong)
+    for(const b of bouncePads){
+      const br = {x:b.x, y:b.y, w:b.w, h:b.h};
+      if(rectsCollide(player, br) && player.vy > 0){ // hitting from above
+        player.vy = jumpPower * b.strength; // stronger upward impulse
+        player.onGround = false;
+      }
+    }
+
+    // spike collision (hazard)
+    for(const s of spikes){ if(rectsCollide(player, s)){ hit(); return; } }
+
+    // swinging axes collision
+    for(const a of axes){
+      a.phase = (a.phase || 0) + a.speed * dt;
+      const ang = Math.sin(a.phase) * (a.arc/2);
+      const ax = a.px + Math.cos(ang) * a.len;
+      const ay = a.py + Math.sin(ang) * a.len;
+      // treat axe as a circle
+      if(circleRect(ax, ay, 22, player.x, player.y, player.w, player.h)){ hit(); return; }
+      a._screenX = ax; a._screenY = ay;
+    }
+
+    // eye countdown and chase
+    const now = performance.now();
+    const chaseDelay = 1000;
+    if(!eye.startChaseTime) eye.startChaseTime = now;
+    if(now - eye.startChaseTime > chaseDelay){
+      const chaseDX = (player.x + player.w/2) - eye.x;
+      const chaseSpeed = 2.6;
+      eye.x += Math.sign(chaseDX) * chaseSpeed * (dt/16);
+      const chaseDY = (player.y + player.h/2) - eye.y;
+      const distToPlayer = Math.abs(chaseDX);
+      const vFactor = distToPlayer < 240 ? 1.1 : 0.7;
+      eye.y += chaseDY * 0.08 * vFactor;
+    }
+
+    // eye collision (hazard)
+    if(circleRect(eye.x, eye.y, eye.r, player.x, player.y, player.w, player.h)) { hit(); return; }
+
+    // falling off bottom of screen -> death
+    // since camera centers player, consider death if player's world y is far below camera by > H/2
+    if(player.y - (platforms[0].y) > H){ hit(); return; }
+
+    // distance
+    distance = Math.max(distance, Math.floor(player.x));
+  }
+
+  // render (camera centered)
+  function render(){
+    ctx.clearRect(0,0,W,H);
+
+    // CAMERA: center player on screen
+    ctx.save();
+    ctx.translate(W/2 - (player.x + player.w/2), H/2 - (player.y + player.h/2));
+
+    // background (world space)
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#071428'); g.addColorStop(1,'#031024'); ctx.fillStyle = g; ctx.fillRect(player.x-512, player.y-288, 1024, 576);
+
+    // draw platforms
+    for(const p of platforms){ ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--plat') || '#6ea8ff'; ctx.fillRect(p.x, p.y, p.w, p.h); }
+    // draw moving platforms
+    for(const m of movingPlatforms){ ctx.fillStyle = '#9ec4ff'; ctx.fillRect(m.x, m.y, m.w, m.h); }
+
+    // draw spikes
+    for(const s of spikes){ ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--spike') || '#ff5b5b'; ctx.beginPath(); ctx.moveTo(s.x, s.y + s.h); ctx.lineTo(s.x + s.w/2, s.y); ctx.lineTo(s.x + s.w, s.y + s.h); ctx.closePath(); ctx.fill(); }
+
+    // draw bounce pads
+    for(const b of bouncePads){ ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bounce') || '#7cff7a'; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle='#0a6f12'; ctx.strokeRect(b.x,b.y,b.w,b.h); }
+
+    // draw player
+    ctx.save(); ctx.translate(player.x + player.w/2, player.y + player.h/2); const tilt = Math.max(-0.25, Math.min(0.25, player.vy*0.02)); ctx.rotate(tilt); ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--player') || '#7afcff'; ctx.fillRect(-player.w/2, -player.h/2, player.w, player.h); ctx.restore();
+
+    // draw axes
+    for(const a of axes){
+      const ang = Math.sin(a.phase || 0) * (a.arc/2);
+      const ax = a.px + Math.cos(ang) * a.len;
+      const ay = a.py + Math.sin(ang) * a.len;
+      // rope
+      ctx.strokeStyle='rgba(200,200,200,0.6)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(a.px,a.py); ctx.lineTo(ax,ay); ctx.stroke();
+      // axe head
+      ctx.fillStyle='#c43b3b'; ctx.beginPath(); ctx.arc(ax,ay,22,0,Math.PI*2); ctx.fill();
+    }
+
+    // draw eye with stationary electric aura
+    ctx.save();
+    ctx.translate(eye.x, eye.y);
+
+    // draw main eye (Version B: red eye + black pupil + highlight)
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--eye') || '#ff2a2a';
+    ctx.beginPath();
+    ctx.arc(0, 0, eye.r, 0, Math.PI*2);
+    ctx.fill();
+
+    // pupil
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(0, 0, eye.r * 0.45, 0, Math.PI*2);
+    ctx.fill();
+
+    // white shine
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.beginPath();
+    ctx.arc(-eye.r*0.35, -eye.r*0.35, eye.r*0.18, 0, Math.PI*2);
+    ctx.fill();
+
+    // glowing stationary rings (not orbiting)
+    for(let i=0;i<3;i++){
+      const ringR = eye.r * (1.4 + i*0.3);
+      ctx.strokeStyle = `rgba(255,40,40,${0.55 - i*0.15})`;
+      ctx.lineWidth = 3 + i;
+      ctx.beginPath();
+      ctx.arc(0,0, ringR, 0, Math.PI*2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+
+    ctx.restore();
+
+    // countdown / GO flash (screen-space)
+    ctx.restore();
+    const now = performance.now();
+    const chaseDelay = 1000;
+    const timeLeft = chaseDelay - (now - (eye.startChaseTime || now));
+    if(timeLeft > 0){ ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = '48px system-ui'; ctx.textAlign = 'center'; ctx.fillText(Math.ceil(timeLeft/1000), W/2, H/2); }
+    else if(eye.goShown && now - eye.goShown < 300){ ctx.fillStyle = 'rgba(0,255,120,0.95)'; ctx.font = '64px system-ui'; ctx.textAlign = 'center'; ctx.fillText('GO!', W/2, H/2); }
+
+    // HUD
+    ctx.fillStyle='rgba(255,255,255,0.04)'; ctx.fillRect(12,12,260,44); ctx.fillStyle='#dff6ff'; ctx.font='16px system-ui'; ctx.textAlign='left'; ctx.fillText('Distance: '+distance+' m', 22, 36);
+
+    if(dead){ msg.style.display='block'; } else { msg.style.display='none'; }
+  }
+
+  function loop(ts){ if(!lastTime) lastTime = ts; const dt = Math.min(40, ts - lastTime); lastTime = ts; if(running && !dead) update(dt); render(); requestAnimationFrame(loop); }
+
+  // UI
+  startBtn.addEventListener('click', ()=>start()); restartBtn.addEventListener('click', ()=>{ reset(); start(); }); canvas.addEventListener('dblclick', ()=>{ reset(); start(); });
+
+  // init
+  reset(); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
