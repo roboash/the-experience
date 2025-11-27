@@ -1,5 +1,3 @@
-load this GD clone in a canvas
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -12,23 +10,71 @@ load this GD clone in a canvas
     .wrap{width:min(1024px,96vw);padding:18px}
     .hud{display:flex;gap:12px;align-items:center;margin-bottom:8px}
     button{background:#1b2a44;color:#dff6ff;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
+    button:hover{background:#2a4065}
+    button.active{background:#4f86ff;color:#fff}
     .muted{color:#9fbff9;font-size:13px}
     canvas{background:linear-gradient(180deg,#071228,#031021);display:block;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
     .overlay{position:absolute;left:0;right:0;text-align:center;color:#fff}
+
+    /* Touch Controls */
+    .touch-controls {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      right: 20px;
+      display: none; /* Hidden by default, shown via JS if touch detected */
+      justify-content: space-between;
+      pointer-events: none; /* Let clicks pass through to canvas if needed */
+    }
+    .touch-btn {
+      width: 80px;
+      height: 80px;
+      background: rgba(255, 255, 255, 0.15);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+    .touch-btn:active { background: rgba(255, 255, 255, 0.3); }
+    .d-pad { display: flex; gap: 15px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="hud">
-      <button id="startBtn">Start</button>
+      <button id="pauseBtn">⏸ Pause</button>
       <button id="restartBtn">Restart</button>
-      <div class="muted">Jump: Space / W / Up • Start/Restart: Enter • Tap controls supported</div>
+      <button id="muteBtn">🔊 Music On</button>
+      <div class="muted">Move: A/D/Arrows • Jump: Space/W/Up</div>
       <div style="flex:1"></div>
-      <div class="muted">Best: <span id="best">0</span></div>
+      <div class="muted">Coins: <span id="coins">0</span> • Best: <span id="bestCoins">0</span></div>
+      <div style="margin-left:12px" class="muted">Distance Best: <span id="best">0</span></div>
     </div>
     <div style="position:relative">
       <canvas id="c" width="1024" height="576" tabindex="0" aria-label="Platformer eye chase"></canvas>
       <div id="msg" class="overlay" style="top:40%;font-size:28px;display:none">You Died — Press Enter to restart</div>
+
+      <!-- Pause Menu Overlay -->
+      <div id="pauseMenu" class="overlay" style="top:35%;display:none;background:rgba(0,0,0,0.8);padding:40px;border-radius:20px;left:50%;transform:translateX(-50%);width:300px">
+        <div style="font-size:32px;margin-bottom:20px;font-weight:bold">Paused</div>
+        <button onclick="window.resumeGame()" style="display:block;width:100%;margin:10px 0;background:#4f86ff;font-size:20px;padding:10px">Resume</button>
+        <button onclick="window.exitLevel()" style="display:block;width:100%;margin:10px 0;background:#ff5b5b;font-size:20px;padding:10px">Exit Level</button>
+      </div>
+
+      <!-- Touch Controls -->
+      <div class="touch-controls" id="touchControls">
+        <div class="d-pad">
+          <div class="touch-btn" id="btnLeft">←</div>
+          <div class="touch-btn" id="btnRight">→</div>
+        </div>
+        <div class="touch-btn" id="btnJump">↑</div>
+      </div>
     </div>
   </div>
 
@@ -38,19 +84,206 @@ const x = c.getContext('2d');
 const W = 1024, H = 576;
 
 // Game state
-let gameRunning = false;
+let gameState = 'MENU'; // MENU, PLAYING, GAMEOVER, VICTORY
 let score = 0;
 let bestScore = localStorage.getItem('eyeChaseBest') || 0;
 document.getElementById('best').textContent = bestScore;
 let camera = 0;
 let twinkle = 0;
-let goalReached = false;
+let coins = 0;
+let coinsCollected = [];
+let bestCoins = localStorage.getItem('eyeChaseBestCoins') || 0;
+document.getElementById('bestCoins').textContent = bestCoins;
+let currentLevel = 1;
+
+// --- AUDIO SYSTEM ---
+const Audio = {
+  ctx: null,
+  enabled: true,
+  init: function() {
+    if(!this.ctx) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if(this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+  },
+  playTone: function(freq, type, duration, vol=0.1) {
+    if(!this.enabled || !this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+    gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + duration);
+  },
+  playJump: function() {
+    if(!this.enabled) return;
+    this.init();
+    // Slide up square wave
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(300, this.ctx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.1);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.1);
+  },
+  playCoin: function() {
+    if(!this.enabled) return;
+    this.init();
+    // High ping
+    this.playTone(1200, 'sine', 0.1, 0.05);
+    setTimeout(() => this.playTone(1800, 'sine', 0.2, 0.05), 50);
+  },
+  playBounce: function() {
+    if(!this.enabled) return;
+    this.init();
+    // Spring sound
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(200, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(600, this.ctx.currentTime + 0.2);
+    gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.2);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.2);
+  },
+  playDie: function() {
+    if(!this.enabled) return;
+    this.init();
+    // Noise/crunch
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(100, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(10, this.ctx.currentTime + 0.3);
+    gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.3);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.3);
+  }
+};
+
+// Music Sequencer
+const Music = {
+  bpm: 140,
+  nextNoteTime: 0,
+  isPlaying: false,
+  timerID: null,
+  beat: 0,
+
+  // Simple C Minor chase theme
+  // Frequencies for C3, Eb3, F3, G3, Bb3, C4...
+  notes: {
+    'C2': 65.41, 'Eb2': 77.78, 'F2': 87.31, 'G2': 98.00, 'Bb2': 116.54,
+    'C3': 130.81, 'Eb3': 155.56, 'F3': 174.61, 'G3': 196.00, 'Bb3': 233.08,
+    'C4': 261.63, 'Eb4': 311.13, 'F4': 349.23, 'G4': 392.00, 'Bb4': 466.16,
+    'C5': 523.25
+  },
+
+  sequence: [
+    // Bar 1
+    {n: 'C3', d: 0.25}, {n: null, d: 0.25}, {n: 'C3', d: 0.25}, {n: 'Eb3', d: 0.25},
+    {n: 'F3', d: 0.25}, {n: 'G3', d: 0.25}, {n: 'C3', d: 0.25}, {n: 'G2', d: 0.25},
+    // Bar 2
+    {n: 'C3', d: 0.25}, {n: 'C3', d: 0.25}, {n: 'Bb2', d: 0.25}, {n: 'G2', d: 0.25},
+    {n: 'F2', d: 0.25}, {n: 'G2', d: 0.25}, {n: 'Bb2', d: 0.25}, {n: 'C3', d: 0.25},
+    // Bar 3 (Higher energy)
+    {n: 'C4', d: 0.25}, {n: 'G3', d: 0.25}, {n: 'Eb3', d: 0.25}, {n: 'C3', d: 0.25},
+    {n: 'G3', d: 0.25}, {n: 'F3', d: 0.25}, {n: 'Eb3', d: 0.25}, {n: 'D3', d: 0.25},
+    // Bar 4
+    {n: 'C3', d: 0.5}, {n: 'G2', d: 0.5}, {n: 'C2', d: 0.5}, {n: null, d: 0.5}
+  ],
+
+  start: function() {
+    if(this.isPlaying || !Audio.enabled) return;
+    Audio.init();
+    this.isPlaying = true;
+    this.beat = 0;
+    this.nextNoteTime = Audio.ctx.currentTime + 0.1;
+    this.scheduler();
+  },
+
+  stop: function() {
+    this.isPlaying = false;
+    clearTimeout(this.timerID);
+  },
+
+  scheduler: function() {
+    if(!this.isPlaying) return;
+    while(this.nextNoteTime < Audio.ctx.currentTime + 0.1) {
+      this.playNote(this.beat);
+      this.advanceNote();
+    }
+    this.timerID = setTimeout(() => this.scheduler(), 25);
+  },
+
+  playNote: function(beatIndex) {
+    const note = this.sequence[beatIndex % this.sequence.length];
+    if(note.n) {
+      // Bass/Lead synth
+      const osc = Audio.ctx.createOscillator();
+      const gain = Audio.ctx.createGain();
+      osc.type = beatIndex % 8 === 0 ? 'square' : 'triangle'; // Square on downbeats
+      osc.frequency.value = this.notes[note.n];
+
+      // Envelope
+      gain.gain.setValueAtTime(0.08, this.nextNoteTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.nextNoteTime + (note.d * 60/this.bpm) * 0.8);
+
+      osc.connect(gain);
+      gain.connect(Audio.ctx.destination);
+      osc.start(this.nextNoteTime);
+      osc.stop(this.nextNoteTime + (note.d * 60/this.bpm));
+    }
+
+    // Simple Hi-hat every beat
+    if(beatIndex % 2 === 0) {
+      const noise = Audio.ctx.createOscillator(); // Using high freq osc as makeshift hi-hat
+      const gain = Audio.ctx.createGain();
+      noise.type = 'square';
+      noise.frequency.value = 8000; // Pseudo-noise
+      gain.gain.setValueAtTime(0.01, this.nextNoteTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.nextNoteTime + 0.05);
+      noise.connect(gain);
+      gain.connect(Audio.ctx.destination);
+      noise.start(this.nextNoteTime);
+      noise.stop(this.nextNoteTime + 0.05);
+    }
+  },
+
+  advanceNote: function() {
+    const secondsPerBeat = 60.0 / this.bpm;
+    // Assuming all steps are 16th notes (0.25 beat) for simplicity in scheduler
+    // But our data structure has 'd' (duration in beats).
+    // To keep it simple, we'll advance by the duration of the current note in the sequence
+    const currentNote = this.sequence[this.beat % this.sequence.length];
+    this.nextNoteTime += currentNote.d * secondsPerBeat;
+    this.beat++;
+  }
+};
 
 // Player (cube that auto-runs)
 const player = {
   x: 150, y: 400, w: 30, h: 30,
-  vy: 0,
-  speed: 3.5, // Slower auto-run speed
+  vx: 0, vy: 0,
+  speed: 4.0, // Fixed slow pace
+  accel: 0.5,
+  friction: 0.85,
   jumpForce: -14,
   grounded: false,
   rotation: 0
@@ -59,11 +292,12 @@ const player = {
 // Eye enemy (Huge size)
 const eye = {
   x: -150, y: 200, w: 175, h: 175,
-  speed: 0.035
+  speed: 2.0 // Fixed pixels per frame
 };
 
 // Level obstacles
 let obstacles = [];
+let coinObjects = [];
 const groundY = H - 80;
 let levelLength = 5000;
 const stars = Array.from({length: 60}, () => ({
@@ -81,63 +315,166 @@ const goal = {x: levelLength + 400, y: groundY - 40, r: 55};
 // Generate level
 function generateLevel() {
   obstacles = [];
+  coinObjects = [];
+
+  // Helper to add ground segment
+  const addGround = (x, w) => obstacles.push({x, y: groundY, w, h: 80, type: 'ground'});
+  // Helper to add platform
+  const addPlat = (x, y, w) => {
+    obstacles.push({x, y: groundY - y, w, h: 20, type: 'platform'});
+    obstacles.push({x, y: groundY, w, h: 80, type: 'ground'}); // Support pillar
+  };
+  // Helper to add spike
+  const addSpike = (x) => obstacles.push({x, y: groundY - 20, w: 30, h: 20, type: 'spike'});
+  // Helper to add bounce pad
+  const addBounce = (x) => {
+    obstacles.push({x, y: groundY, w: 200, h: 80, type: 'ground'});
+    obstacles.push({x: x + 85, y: groundY - 15, w: 30, h: 15, type: 'bouncePad'});
+  };
+  // Helper to add coin
+  let coinId = 0;
+  const addCoin = (x, y) => coinObjects.push({x, y: groundY - y, r: 12, id: 'coin_' + (coinId++)});
+
   let x = 0;
 
-  // 1. Safe starting zone
-  while(x < 800) {
-    obstacles.push({x: x, y: groundY, w: 100, h: 80, type: 'ground'});
-    x += 100;
+  // 1. Start: Safe running area
+  addGround(x, 800);
+  x += 800;
+
+  if (currentLevel === 1) {
+    // Level 1: Intro (Short & Easy) ~2500px
+    addGround(x, 200); x += 280; // Gap
+    addCoin(x - 40, 75);
+    addGround(x, 200); x += 280; // Gap
+
+    addGround(x, 400);
+    addSpike(x + 200);
+    x += 400;
+
+    addPlat(x, 60, 200);
+    addCoin(x + 100, 115);
+    x += 250;
+
+    addBounce(x);
+    addCoin(x + 100, 225);
+    x += 250;
+
+    addGround(x, 500);
+  }
+  else if (currentLevel === 2) {
+    // Level 2: Verticality (Medium) ~3500px
+    addPlat(x, 50, 150); x += 200;
+    addPlat(x, 100, 150); addCoin(x + 75, 130); x += 200;
+    addPlat(x, 50, 150); x += 200;
+
+    addGround(x, 300); x += 280; // Gap
+
+    addBounce(x); addCoin(x + 100, 250); x += 200;
+
+    addPlat(x, 120, 200); x += 250;
+    addPlat(x, 120, 200); addCoin(x + 100, 150); x += 250;
+
+    x += 280; // Gap
+    addPlat(x, 80, 150); x += 200;
+    addPlat(x, 140, 150); x += 200;
+    addCoin(x + 75, 170);
+
+    addGround(x, 400);
+    addSpike(x + 200);
+    x += 400;
+  }
+  else if (currentLevel === 3) {
+    // Level 3: Spikes (Hard) ~4500px
+    // Eased difficulty: Reduced gaps, wider landings
+    addGround(x, 250); addSpike(x + 125); x += 250;
+    addGround(x, 250); addSpike(x + 125); x += 250;
+    addGround(x, 250); addSpike(x + 125); addCoin(x + 125, 80); x += 250;
+
+    x += 240; // Reduced gap from 280
+    addGround(x, 400); addSpike(x + 200); x += 400; // Wider landing
+    x += 240; // Reduced gap
+
+    addBounce(x); x += 200;
+    addPlat(x, 100, 200); addCoin(x + 100, 130); x += 250; // Wider platform
+
+    // Double Spike - More space
+    addGround(x, 600); addSpike(x + 200); addSpike(x + 400); x += 600;
+
+    // Tight jumps - Fixed with Bounce Pads
+    x += 200;
+    addBounce(x); x += 250; // Bounce over first gap
+
+    addGround(x, 200); x += 200;
+    addBounce(x); x += 250; // Bounce over second gap
+
+    addGround(x, 200); addCoin(x + 100, 80); x += 250;
+  }
+  else if (currentLevel === 4) {
+    // Level 4: Sky High (Expert) ~5500px
+    // Added bounce pads to bridge large gaps
+    addGround(x, 150); x += 200;
+    addBounce(x); x += 250; // Bounce over first gap
+
+    addGround(x, 150); x += 200;
+    addBounce(x); x += 250; // Bounce over second gap
+
+    addGround(x, 150); addCoin(x - 40, 75); x += 290;
+
+    addBounce(x); addCoin(x + 100, 250); x += 250;
+    x += 320;
+
+    // High platforms
+    addPlat(x, 150, 100); x += 250;
+    addPlat(x, 180, 100); x += 250;
+    x += 320;
+
+    addGround(x, 200); addSpike(x + 100); x += 200;
+    x += 200;
+    addBounce(x); x += 250; // Helper bounce
+
+    addGround(x, 200); addSpike(x + 100); x += 200;
+
+    addBounce(x); x += 250;
+    addPlat(x, 200, 150); addCoin(x + 75, 230); x += 250;
+  }
+  else {
+    // Level 5: The Marathon (Master) ~7000px
+
+    // Segment 1: Speed
+    addPlat(x, 60, 150); x += 200;
+    x += 280;
+    addGround(x, 200); addSpike(x + 100); x += 200;
+
+    // Segment 2: Bounce
+    addBounce(x); addCoin(x + 100, 240); x += 200;
+    addPlat(x, 100, 150); x += 200;
+    x += 280; // Reduced gap
+
+    // Segment 3: Precision
+    addGround(x, 300); addSpike(x + 150); x += 300;
+    x += 200;
+    addBounce(x); x += 250; // Added bounce for big gap
+
+    addGround(x, 150); x += 280;
+    addGround(x, 150); x += 280;
+
+    // Segment 4: Vertical
+    addBounce(x); x += 200;
+    addPlat(x, 180, 200); addCoin(x + 100, 210); x += 300;
+    addPlat(x, 100, 200); x += 300;
+
+    // Segment 5: Final Sprint
+    addGround(x, 800);
+    addSpike(x + 200);
+    addSpike(x + 400);
+    addSpike(x + 600);
+    x += 800;
   }
 
-  // 2. Generate level segments sequentially
-  while(x < levelLength) {
-    const type = Math.random();
-
-    // GAP (15% chance)
-    if(type < 0.15) {
-      // Max jump distance is reduced due to slower speed. Keep gaps smaller (60-100px)
-      const gapWidth = 60 + Math.random() * 40;
-      x += gapWidth;
-      // Ensure solid landing ground after gap
-      obstacles.push({x: x, y: groundY, w: 200, h: 80, type: 'ground'});
-      x += 200;
-    }
-    // PLATFORM (25% chance)
-    else if(type < 0.4) {
-      // Max jump height is ~120px. Keep platforms reachable (60-100px high)
-      const height = 60 + Math.random() * 40;
-      const width = 150 + Math.random() * 100;
-
-      // Add platform
-      obstacles.push({x: x, y: groundY - height, w: width, h: 20, type: 'platform'});
-      // Add ground underneath
-      obstacles.push({x: x, y: groundY, w: width, h: 80, type: 'ground'});
-
-      // Maybe put a spike on the platform? (20% chance)
-      if(Math.random() < 0.2) {
-        obstacles.push({x: x + width/2 - 15, y: groundY - height - 20, w: 30, h: 20, type: 'spike'});
-      }
-
-      x += width;
-    }
-    // SPIKE ON GROUND (20% chance)
-    else if(type < 0.6) {
-      // Solid ground with a spike in the middle
-      obstacles.push({x: x, y: groundY, w: 300, h: 80, type: 'ground'});
-      obstacles.push({x: x + 135, y: groundY - 20, w: 30, h: 20, type: 'spike'});
-      x += 300;
-    }
-    // PLAIN GROUND (40% chance)
-    else {
-      obstacles.push({x: x, y: groundY, w: 100, h: 80, type: 'ground'});
-      x += 100;
-    }
-  }
-
-  // End level safely
-  obstacles.push({x: x, y: groundY, w: 500, h: 80, type: 'ground'});
-  goal.x = x + 250;
+  // Goal area
+  goal.x = x + 200;
   goal.y = groundY - 40;
+  addGround(x, 500);
 }
 
 // Input
@@ -145,19 +482,9 @@ const keys = {};
 window.addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
 
-  // Jump controls: Space, W, Up arrow
-  if(['w',' ','arrowup'].includes(e.key.toLowerCase())) {
+  // Prevent scrolling with arrow keys
+  if(['arrowdown','arrowleft','arrowright','arrowup',' '].includes(e.key.toLowerCase())) {
     e.preventDefault();
-    if(gameRunning && player.grounded) {
-      player.vy = player.jumpForce;
-      player.grounded = false;
-    }
-  }
-
-  // Enter to start/restart
-  if(e.key === 'Enter') {
-    e.preventDefault();
-    startGame();
   }
 });
 window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
@@ -168,10 +495,88 @@ function collision(a, b) {
          a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function spikeCollision(p, s) {
+  // Precise Triangle vs AABB collision using Separating Axis Theorem (SAT)
+  // We only need to test the 2 slope normals, as AABB (x/y axes) are already checked
+
+  // Spike vertices
+  const sA = {x: s.x, y: s.y + s.h}; // Bottom Left
+  const sB = {x: s.x + s.w/2, y: s.y}; // Top Tip
+  const sC = {x: s.x + s.w, y: s.y + s.h}; // Bottom Right
+
+  // Player vertices
+  const p1 = {x: p.x, y: p.y};
+  const p2 = {x: p.x + p.w, y: p.y};
+  const p3 = {x: p.x + p.w, y: p.y + p.h};
+  const p4 = {x: p.x, y: p.y + p.h};
+  const pVerts = [p1, p2, p3, p4];
+
+  // Axes to test: Normals of the two slopes
+  // Left slope normal: (h, w/2)
+  const axis1 = {x: s.h, y: s.w/2};
+  // Right slope normal: (-h, w/2)
+  const axis2 = {x: -s.h, y: s.w/2};
+
+  const axes = [axis1, axis2];
+
+  for(let axis of axes) {
+    // Project Spike
+    let minS = Infinity, maxS = -Infinity;
+    [sA, sB, sC].forEach(v => {
+      const proj = v.x * axis.x + v.y * axis.y;
+      minS = Math.min(minS, proj);
+      maxS = Math.max(maxS, proj);
+    });
+
+    // Project Player
+    let minP = Infinity, maxP = -Infinity;
+    pVerts.forEach(v => {
+      const proj = v.x * axis.x + v.y * axis.y;
+      minP = Math.min(minP, proj);
+      maxP = Math.max(maxP, proj);
+    });
+
+    // Check for gap (Separating Axis Found)
+    if (maxS < minP || maxP < minS) return false;
+  }
+
+  return true;
+}
+
 // Update player
 function updatePlayer() {
-  // Auto-run to the right
-  player.x += player.speed;
+  // Manual movement with physics
+  let move = 0;
+  if(keys['d'] || keys['arrowright']) move = 1;
+  if(keys['a'] || keys['arrowleft']) move = -1;
+
+  // Apply acceleration
+  if (move !== 0) {
+    player.vx += move * player.accel;
+    // Cap speed
+    if (player.vx > player.speed) player.vx = player.speed;
+    if (player.vx < -player.speed) player.vx = -player.speed;
+  } else {
+    // Apply friction when no input
+    player.vx *= player.friction;
+    // Snap to 0 if very slow
+    if(Math.abs(player.vx) < 0.1) player.vx = 0;
+  }
+
+  player.x += player.vx;
+
+  // Auto-Jump (Bunny Hop)
+  if((keys[' '] || keys['w'] || keys['arrowup']) && player.grounded) {
+    player.vy = player.jumpForce;
+    player.grounded = false;
+    Audio.playJump();
+  }
+
+  // Ensure player doesn't go backwards too far (optional, but keeps level flow)
+  if(player.x < 0) {
+    player.x = 0;
+    player.vx = 0;
+  }
 
   // Gravity
   player.vy += 0.8;
@@ -189,8 +594,18 @@ function updatePlayer() {
   for(let o of obstacles) {
     if(collision(player, o)) {
       if(o.type === 'spike') {
-        gameOver();
-        return;
+        // Precise spike collision check
+        if(spikeCollision(player, o)) {
+          gameOver();
+          return;
+        }
+        // If spikeCollision is false, we are in the empty corner of the hitbox - safe!
+      }
+      else if(o.type === 'bouncePad') {
+        // Launch player upward
+        player.vy = -22;
+        player.grounded = false;
+        Audio.playBounce();
       }
       if(o.type === 'ground' || o.type === 'platform') {
         if(player.vy > 0 && player.y + player.h - player.vy < o.y + 5) {
@@ -204,6 +619,26 @@ function updatePlayer() {
 
   // Fall off screen = death
   if(player.y > H + 50) gameOver();
+
+  // Check coin collection
+  for(let coin of coinObjects) {
+    if(coinsCollected.includes(coin.id)) continue;
+
+    const dist = Math.sqrt(
+      Math.pow(player.x + player.w/2 - coin.x, 2) +
+      Math.pow(player.y + player.h/2 - coin.y, 2)
+    );
+
+    // Increased collection radius (magnet effect)
+    // Was: player.w/2 + coin.r (~15 + 12 = 27)
+    // Now: player.w/2 + coin.r + 20 (~47) - much easier!
+    if(dist < player.w/2 + coin.r + 20) {
+      coinsCollected.push(coin.id);
+      coins++;
+      document.getElementById('coins').textContent = coins;
+      Audio.playCoin();
+    }
+  }
 
   // Check goal reach
   const goalBox = {
@@ -226,9 +661,14 @@ function updateEye() {
   const desiredX = Math.max(player.x - eye.w * 0.9, camera - eye.w * 0.6);
   const desiredY = player.y - eye.h / 2 + 10;
 
-  const catchUp = Math.min(0.1, eye.speed + score / 25000);
-  eye.x += (desiredX - eye.x) * catchUp;
-  eye.y += (desiredY - eye.y) * catchUp;
+  // Constant speed movement (no acceleration)
+  if (eye.x < desiredX) {
+    eye.x += eye.speed;
+    if (eye.x > desiredX) eye.x = desiredX;
+  }
+
+  // Smooth Y movement is fine
+  eye.y += (desiredY - eye.y) * 0.1;
 
   // Maintain a safe trailing distance so the player is never caught
   const minTrailing = eye.w * 0.75;
@@ -239,6 +679,149 @@ function updateEye() {
   // Keep eye within viewable bounds
   if(eye.x < camera - eye.w * 0.6) eye.x = camera - eye.w * 0.6;
   if(eye.x + eye.w > camera + W - 60) eye.x = camera + W - 60 - eye.w;
+}
+
+// Draw Menu
+function drawMenu() {
+  // Clear with gradient background
+  const gradient = x.createLinearGradient(0, 0, 0, H);
+  gradient.addColorStop(0, '#071228');
+  gradient.addColorStop(1, '#020817');
+  x.fillStyle = gradient;
+  x.fillRect(0, 0, W, H);
+
+  // Star field
+  twinkle += 0.01;
+  x.save();
+  x.globalAlpha = 0.7;
+  for(const star of stars) {
+    const brightness = 0.6 + Math.sin(twinkle + star.twinkle) * 0.3;
+    x.fillStyle = `rgba(180, 220, 255, ${brightness})`;
+    x.beginPath();
+    x.arc(star.x - W, star.y, star.r, 0, Math.PI * 2); // Simple star position for menu
+    x.fill();
+  }
+  x.restore();
+
+  // Title
+  x.save();
+  x.textAlign = 'center';
+
+  // "EYE"
+  x.font = 'bold 120px Inter, system-ui';
+  x.fillStyle = '#ff2a2a';
+  x.shadowColor = 'rgba(255, 42, 42, 0.5)';
+  x.shadowBlur = 30;
+  x.fillText('EYE', W/2, H/2 - 60);
+
+  // "CHASE"
+  x.fillStyle = '#7afcff';
+  x.shadowColor = 'rgba(122, 252, 255, 0.5)';
+  x.fillText('CHASE', W/2, H/2 + 50);
+
+  // Play Button
+  const btnW = 200;
+  const btnH = 60;
+  const btnX = W/2 - btnW/2;
+  const btnY = H/2 + 120;
+
+  x.shadowBlur = 20;
+  x.shadowColor = 'rgba(79, 134, 255, 0.6)';
+  x.fillStyle = '#4f86ff';
+  // Draw rounded rect
+  x.beginPath();
+  x.roundRect(btnX, btnY, btnW, btnH, 30);
+  x.fill();
+
+  // Button Text
+  x.shadowBlur = 0;
+  x.font = 'bold 28px Inter, system-ui';
+  x.fillStyle = '#fff';
+  x.textBaseline = 'middle';
+  x.fillText('PLAY', W/2, btnY + btnH/2);
+
+  // Credits/Controls
+  x.font = '16px Inter, system-ui';
+  x.fillStyle = '#9fbff9';
+  x.fillText('Controls: Arrows / WASD / Touch', W/2, H - 40);
+
+  x.restore();
+}
+
+// Draw Level Select
+function drawLevelSelect() {
+  // Clear
+  const gradient = x.createLinearGradient(0, 0, 0, H);
+  gradient.addColorStop(0, '#071228');
+  gradient.addColorStop(1, '#020817');
+  x.fillStyle = gradient;
+  x.fillRect(0, 0, W, H);
+
+  // Title
+  x.save();
+  x.textAlign = 'center';
+  x.font = 'bold 60px Inter, system-ui';
+  x.fillStyle = '#fff';
+  x.fillText('Select Level', W/2, H/2 - 120);
+
+  // Level Buttons Grid
+  const btnW = 140;
+  const btnH = 80;
+  const gap = 20;
+  const cols = 3;
+  const startX = W/2 - (cols * btnW + (cols-1)*gap)/2;
+  const startY = H/2 - 20;
+
+  for(let i = 1; i <= 5; i++) {
+    const col = (i-1) % cols;
+    const row = Math.floor((i-1) / cols);
+    const btnX = startX + col * (btnW + gap);
+    const btnY = startY + row * (btnH + gap);
+
+    x.shadowBlur = 10;
+    x.shadowColor = 'rgba(122, 252, 255, 0.3)';
+    x.fillStyle = '#1b2a44';
+    x.beginPath();
+    x.roundRect(btnX, btnY, btnW, btnH, 15);
+    x.fill();
+
+    x.strokeStyle = '#7afcff';
+    x.lineWidth = 2;
+    x.stroke();
+
+    x.shadowBlur = 0;
+    x.fillStyle = '#7afcff';
+    x.font = 'bold 28px Inter, system-ui';
+    x.textBaseline = 'middle';
+    x.fillText('Lvl ' + i, btnX + btnW/2, btnY + btnH/2);
+  }
+
+  // Back Button (Red Cross)
+  const backX = 30;
+  const backY = 30;
+  const backSize = 40;
+
+  x.fillStyle = '#ff5b5b';
+  x.shadowColor = 'rgba(255, 91, 91, 0.5)';
+  x.shadowBlur = 10;
+  x.beginPath();
+  x.arc(backX + backSize/2, backY + backSize/2, backSize/2, 0, Math.PI * 2);
+  x.fill();
+
+  x.strokeStyle = '#fff';
+  x.lineWidth = 4;
+  x.lineCap = 'round';
+  x.shadowBlur = 0;
+  x.beginPath();
+  // X shape
+  const pad = 10;
+  x.moveTo(backX + pad, backY + pad);
+  x.lineTo(backX + backSize - pad, backY + backSize - pad);
+  x.moveTo(backX + backSize - pad, backY + pad);
+  x.lineTo(backX + pad, backY + backSize - pad);
+  x.stroke();
+
+  x.restore();
 }
 
 // Render
@@ -298,7 +881,75 @@ function draw() {
       x.closePath();
       x.fill();
       x.shadowBlur = 0;
+    } else if(o.type === 'bouncePad') {
+      // Draw bounce pad with spring effect
+      const bounceGradient = x.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
+      bounceGradient.addColorStop(0, '#7cff7a');
+      bounceGradient.addColorStop(1, '#2e7d32');
+      x.fillStyle = bounceGradient;
+      x.fillRect(o.x, o.y, o.w, o.h);
+      x.strokeStyle = 'rgba(255,255,255,0.4)';
+      x.lineWidth = 2;
+      x.strokeRect(o.x, o.y, o.w, o.h);
+
+      // Draw horizontal spring lines
+      x.strokeStyle = 'rgba(0,0,0,0.4)';
+      x.lineWidth = 3;
+      for(let i = 1; i < 4; i++) {
+        const lineY = o.y + (o.h / 4) * i;
+        x.beginPath();
+        x.moveTo(o.x + 4, lineY);
+        x.lineTo(o.x + o.w - 4, lineY);
+        x.stroke();
+      }
     }
+  }
+
+  // Draw coins
+  const coinTime = performance.now() * 0.003;
+  for(let coin of coinObjects) {
+    if(coinsCollected.includes(coin.id)) continue;
+    if(coin.x + coin.r < camera - 50 || coin.x - coin.r > camera + W + 50) continue;
+
+    x.save();
+    x.translate(coin.x, coin.y);
+
+    // Floating animation
+    const float = Math.sin(coinTime + coin.x * 0.01) * 3;
+    x.translate(0, float);
+
+    // Rotation
+    x.rotate(coinTime * 2);
+
+    // Glow
+    x.shadowColor = 'rgba(255, 215, 0, 0.6)';
+    x.shadowBlur = 15;
+
+    // Outer ring
+    const coinGradient = x.createRadialGradient(0, 0, 0, 0, 0, coin.r);
+    coinGradient.addColorStop(0, '#ffd700');
+    coinGradient.addColorStop(0.7, '#ffed4e');
+    coinGradient.addColorStop(1, '#ffa500');
+    x.fillStyle = coinGradient;
+    x.beginPath();
+    x.arc(0, 0, coin.r, 0, Math.PI * 2);
+    x.fill();
+
+    // Inner circle
+    x.fillStyle = '#ffed4e';
+    x.beginPath();
+    x.arc(0, 0, coin.r * 0.6, 0, Math.PI * 2);
+    x.fill();
+
+    // Dollar sign or star pattern
+    x.fillStyle = '#ffa500';
+    x.font = 'bold ' + (coin.r * 1.2) + 'px Arial';
+    x.textAlign = 'center';
+    x.textBaseline = 'middle';
+    x.fillText('$', 0, 0);
+
+    x.shadowBlur = 0;
+    x.restore();
   }
 
   // Draw goal portal
@@ -449,39 +1100,85 @@ function draw() {
 
 // Game loop
 function gameLoop() {
-  if(!gameRunning) return;
+  if(gameState === 'MENU') {
+    drawMenu();
+    document.querySelector('.hud').style.opacity = '0';
+    document.getElementById('touchControls').style.display = 'none';
+    document.getElementById('pauseMenu').style.display = 'none';
+  } else if(gameState === 'LEVEL_SELECT') {
+    drawLevelSelect();
+    document.querySelector('.hud').style.opacity = '0';
+    document.getElementById('touchControls').style.display = 'none';
+    document.getElementById('pauseMenu').style.display = 'none';
+  } else if(gameState === 'PLAYING') {
+    document.querySelector('.hud').style.opacity = '1';
+    if(window.ontouchstart === null) { // crude check if touch was enabled
+       // actually touchControls are managed by touch events, let's leave them alone or show them if needed
+    }
 
-  updatePlayer();
-  updateEye();
-  draw();
+    updatePlayer();
+    updateEye();
+    draw();
 
-  score = player.x;
+    score = player.x;
+  } else if(gameState === 'PAUSED') {
+    draw();
+  } else {
+    // Game Over / Victory state
+    // Continue drawing for background effects if desired, or just freeze
+    draw();
+  }
 
   requestAnimationFrame(gameLoop);
 }
 
 // Game over
 function gameOver() {
-  gameRunning = false;
+  gameState = 'GAMEOVER';
+  Audio.playDie();
+  Music.stop();
   if(score > bestScore) {
     bestScore = Math.floor(score);
     localStorage.setItem('eyeChaseBest', bestScore);
     document.getElementById('best').textContent = bestScore;
   }
-  document.getElementById('msg').innerHTML = 'You Died — Press Enter to restart';
+  if(coins > bestCoins) {
+    bestCoins = coins;
+    localStorage.setItem('eyeChaseBestCoins', bestCoins);
+    document.getElementById('bestCoins').textContent = bestCoins;
+  }
+  document.getElementById('msg').innerHTML = 'You Died';
   document.getElementById('msg').style.display = 'block';
 }
 
 function reachGoal() {
-  if(goalReached) return;
-  goalReached = true;
-  gameRunning = false;
+  if(gameState === 'VICTORY') return;
+  gameState = 'VICTORY';
+  Music.stop();
+  // Victory fanfare (arpeggio)
+  if(Audio.enabled) {
+    Audio.playTone(523.25, 'square', 0.1); // C5
+    setTimeout(() => Audio.playTone(659.25, 'square', 0.1), 100); // E5
+    setTimeout(() => Audio.playTone(783.99, 'square', 0.1), 200); // G5
+    setTimeout(() => Audio.playTone(1046.5, 'square', 0.4), 300); // C6
+  }
   if(score > bestScore) {
     bestScore = Math.floor(score);
     localStorage.setItem('eyeChaseBest', bestScore);
     document.getElementById('best').textContent = bestScore;
   }
-  document.getElementById('msg').innerHTML = 'Level Complete! — Press Enter to restart';
+  if(coins > bestCoins) {
+    bestCoins = coins;
+    localStorage.setItem('eyeChaseBestCoins', bestCoins);
+    document.getElementById('bestCoins').textContent = bestCoins;
+  }
+  document.getElementById('msg').innerHTML = `
+    <div style="margin-bottom:20px;font-size:32px;font-weight:bold">Level Complete!</div>
+    <div style="display:flex;gap:20px;justify-content:center">
+      <button onclick="window.nextLevel()" style="background:#4f86ff;font-size:20px;padding:12px 24px">Next Level</button>
+      <button onclick="window.toMenu()" style="background:#1b2a44;font-size:20px;padding:12px 24px">Menu</button>
+    </div>
+  `;
   document.getElementById('msg').style.display = 'block';
 }
 
@@ -489,6 +1186,7 @@ function reachGoal() {
 function startGame() {
   player.x = 150;
   player.y = 466; // Start on ground
+  player.vx = 0;
   player.vy = 0;
   player.rotation = 0;
   player.grounded = false;
@@ -496,22 +1194,186 @@ function startGame() {
   eye.y = 200;
   eye.w = 175;
   eye.h = 175;
-  eye.speed = 0.035;
+  eye.speed = 2.0; // Fixed slow speed
   camera = 0;
   score = 0;
+  coins = 0;
+  coinsCollected = [];
+  document.getElementById('coins').textContent = coins;
   generateLevel();
-  goalReached = false;
-  gameRunning = true;
+
+  gameState = 'PLAYING';
   document.getElementById('msg').style.display = 'none';
-  gameLoop();
+  Music.start();
 }
 
 // Button handlers
-document.getElementById('startBtn').onclick = startGame;
-document.getElementById('restartBtn').onclick = startGame;
-c.ondblclick = startGame;
+document.getElementById('pauseBtn').onclick = function() {
+  if(gameState === 'PLAYING') {
+    gameState = 'PAUSED';
+    document.getElementById('pauseMenu').style.display = 'block';
+    document.getElementById('touchControls').style.display = 'none';
+    Music.stop();
+  } else if(gameState === 'PAUSED') {
+    window.resumeGame();
+  }
+};
+
+document.getElementById('restartBtn').onclick = function() {
+  if(gameState === 'PLAYING' || gameState === 'PAUSED') {
+    startGame();
+  }
+};
+
+document.getElementById('muteBtn').onclick = function() {
+  Audio.enabled = !Audio.enabled;
+  if(Audio.enabled) {
+    Audio.init();
+    this.textContent = '🔊 Music On';
+    this.classList.remove('active');
+    if(gameState === 'PLAYING') Music.start();
+  } else {
+    this.textContent = '🔇 Music Off';
+    this.classList.add('active');
+    Music.stop();
+    if(Audio.ctx) Audio.ctx.suspend();
+  }
+};
+c.ondblclick = null;
+
+// Touch Controls
+const touchControls = document.getElementById('touchControls');
+
+// Show touch controls if touch device is detected
+window.addEventListener('touchstart', function onFirstTouch() {
+  // Only show controls if we are playing, otherwise menu should handle it (or we can show dpad in menu?)
+  // Let's leave them hidden in menu as per gameLoop logic
+  // But we need to enable them so gameLoop CAN show them
+  document.getElementById('touchControls').classList.add('touch-enabled'); // Just a marker if needed
+  window.removeEventListener('touchstart', onFirstTouch, false);
+}, false);
+
+const btnLeft = document.getElementById('btnLeft');
+const btnRight = document.getElementById('btnRight');
+const btnJump = document.getElementById('btnJump');
+
+const handleTouch = (btn, key, isDown) => {
+  btn.addEventListener(isDown ? 'touchstart' : 'touchend', (e) => {
+    e.preventDefault(); // Prevent default zoom/scroll behavior
+    keys[key] = isDown;
+
+    // Special handling for restart on jump touch
+    if(key === ' ' && isDown) {
+      if(gameState === 'GAMEOVER') {
+        startGame();
+      }
+    }
+  }, {passive: false});
+};
+
+// Bind touch events
+handleTouch(btnLeft, 'arrowleft', true);
+handleTouch(btnLeft, 'arrowleft', false);
+handleTouch(btnRight, 'arrowright', true);
+handleTouch(btnRight, 'arrowright', false);
+handleTouch(btnJump, ' ', true);
+handleTouch(btnJump, ' ', false);
+
+// Handle tap/click on canvas for Menu start
+const checkMenuClick = (e) => {
+   const rect = c.getBoundingClientRect();
+   // Scale mouse coordinates to canvas resolution
+   const scaleX = c.width / rect.width;
+   const scaleY = c.height / rect.height;
+
+   const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+   const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+   const x = (clientX - rect.left) * scaleX;
+   const y = (clientY - rect.top) * scaleY;
+
+   if(gameState === 'MENU') {
+      // Check Play Button (W/2 - 100, H/2 + 120, 200, 60)
+      const btnX = W/2 - 100;
+      const btnY = H/2 + 120;
+      const btnW = 200;
+      const btnH = 60;
+
+      if(x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH) {
+         e.preventDefault();
+         gameState = 'LEVEL_SELECT';
+      }
+   } else if(gameState === 'LEVEL_SELECT') {
+      // Grid parameters matching drawLevelSelect
+      const btnW = 140;
+      const btnH = 80;
+      const gap = 20;
+      const cols = 3;
+      const startX = W/2 - (cols * btnW + (cols-1)*gap)/2;
+      const startY = H/2 - 20;
+
+      for(let i = 1; i <= 5; i++) {
+        const col = (i-1) % cols;
+        const row = Math.floor((i-1) / cols);
+        const btnX = startX + col * (btnW + gap);
+        const btnY = startY + row * (btnH + gap);
+
+        if(x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH) {
+           e.preventDefault();
+           currentLevel = i;
+           startGame();
+           return;
+        }
+      }
+
+      // Check Back Button (30, 30, 40, 40)
+      const backX = 30;
+      const backY = 30;
+      const backSize = 40;
+
+      if(x >= backX && x <= backX + backSize && y >= backY && y <= backY + backSize) {
+         e.preventDefault();
+         gameState = 'MENU';
+      }
+   } else if(gameState === 'GAMEOVER') {
+      e.preventDefault();
+      startGame(); // Restart
+   } else if(gameState === 'VICTORY') {
+      // Do nothing on canvas click, rely on HTML buttons
+   }
+};
+
+c.addEventListener('touchstart', checkMenuClick);
+c.addEventListener('mousedown', checkMenuClick); // Also support mouse click
+
+// Global navigation functions
+window.nextLevel = function() {
+  if (currentLevel < 5) {
+    currentLevel++;
+  } else {
+    currentLevel = 1; // Loop back to 1 for now
+  }
+  startGame();
+};
+window.toMenu = function() {
+  gameState = 'LEVEL_SELECT';
+  document.getElementById('msg').style.display = 'none';
+};
+window.resumeGame = function() {
+  gameState = 'PLAYING';
+  document.getElementById('pauseMenu').style.display = 'none';
+  if(window.ontouchstart !== undefined || navigator.maxTouchPoints > 0) {
+     document.getElementById('touchControls').style.display = 'flex';
+  }
+  Music.start();
+};
+window.exitLevel = function() {
+  gameState = 'LEVEL_SELECT';
+  document.getElementById('pauseMenu').style.display = 'none';
+  document.getElementById('touchControls').style.display = 'none';
+  Music.stop();
+};
 
 // Initial setup
-generateLevel();
-draw();
+gameLoop();
 </script>
