@@ -1,579 +1,517 @@
+load this GD clone in a canvas
+
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Eye Chase — Platformer (Extended Level)</title>
-<style>
-:root{--bg:#071022;--ground:#0d2a3f;--player:#7afcff;--plat:#6ea8ff;--spike:#ff5b5b;--eye:#ff2a2a;--pupil:#000;--bounce:#7cff7a}
-html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071022,#030717);color:#dff6ff;display:flex;align-items:center;justify-content:center}
-.wrap{width:min(1024px,96vw);padding:18px}
-.hud{display:flex;gap:12px;align-items:center;margin-bottom:8px}
-button{background:#1b2a44;color:#dff6ff;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
-.muted{color:#9fbff9;font-size:13px}
-canvas{background:linear-gradient(180deg,#071228,#031021);display:block;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
-.overlay{position:absolute;left:0;right:0;text-align:center;color:#fff}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Eye Chase — Platformer (Extended Level)</title>
+  <style>
+    :root{--bg:#071022;--ground:#0d2a3f;--player:#7afcff;--plat:#6ea8ff;--spike:#ff5b5b;--eye:#ff2a2a;--bounce:#7cff7a}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071022,#030717);color:#dff6ff;display:flex;align-items:center;justify-content:center}
+    .wrap{width:min(1024px,96vw);padding:18px}
+    .hud{display:flex;gap:12px;align-items:center;margin-bottom:8px}
+    button{background:#1b2a44;color:#dff6ff;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
+    .muted{color:#9fbff9;font-size:13px}
+    canvas{background:linear-gradient(180deg,#071228,#031021);display:block;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+    .overlay{position:absolute;left:0;right:0;text-align:center;color:#fff}
+  </style>
 </head>
 <body>
-<div class="wrap">
-<div class="hud">
-<button id="startBtn">Start</button>
-<button id="restartBtn">Restart</button>
-<div class="muted">Move: A/D or Left/Right • Jump: Space / W / Up • Start/Restart: Enter</div>
-<div style="flex:1"></div>
-<div class="muted">Best: <span id="best">0</span></div>
-</div>
-<div style="position:relative">
-<canvas id="c" width="1024" height="576" tabindex="0" aria-label="Platformer eye chase"></canvas>
-<div id="msg" class="overlay" style="top:40%;font-size:28px;display:none"></div>
-</div>
+  <div class="wrap">
+    <div class="hud">
+      <button id="startBtn">Start</button>
+      <button id="restartBtn">Restart</button>
+      <div class="muted">Jump: Space / W / Up • Start/Restart: Enter • Tap controls supported</div>
+      <div style="flex:1"></div>
+      <div class="muted">Best: <span id="best">0</span></div>
+    </div>
+    <div style="position:relative">
+      <canvas id="c" width="1024" height="576" tabindex="0" aria-label="Platformer eye chase"></canvas>
+      <div id="msg" class="overlay" style="top:40%;font-size:28px;display:none">You Died — Press Enter to restart</div>
+    </div>
+  </div>
+
 <script>
-const c=document.getElementById('c');
-const x=c.getContext('2d');
-const W=1024,H=576;
+const c = document.getElementById('c');
+const x = c.getContext('2d');
+const W = 1024, H = 576;
 
-let gameRunning=false,score=0,bestScore=localStorage.getItem('eyeChaseBest')||0;
-document.getElementById('best').textContent=bestScore;
-let camera=0,goalReached=false,countdown=3,gameLoopId=null;
+// Game state
+let gameRunning = false;
+let score = 0;
+let bestScore = localStorage.getItem('eyeChaseBest') || 0;
+document.getElementById('best').textContent = bestScore;
+let camera = 0;
+let twinkle = 0;
+let goalReached = false;
 
-const player={x:150,y:466,w:30,h:30,vy:0,speed:3,jumpForce:-22,grounded:false,rotation:0,doubleJump:true};
-const eye={x:150-250,y:466-50,w:175,h:175,speed:3};
-let obstacles=[];
-const groundY=H-80;
-let goal={x:0,y:groundY-40,r:55};
+// Player (cube that auto-runs)
+const player = {
+  x: 150, y: 400, w: 30, h: 30,
+  vy: 0,
+  speed: 3.5, // Slower auto-run speed
+  jumpForce: -14,
+  grounded: false,
+  rotation: 0
+};
 
-function generateLevel(){
-  obstacles=[];
-  let posX=0;
-  for(let i=0;i<8;i++){ obstacles.push({x:posX,y:groundY,w:100,h:80,type:'ground'}); posX+=100; }
-  
-  const segments=[
-    {type:'platform',platformY:groundY-60,width:180, style:'high'},
-    {type:'platform',platformY:groundY-90,width:150, style:'gap'},
-    {type:'platform',platformY:groundY-70,width:200, style:'spike'},
-    {type:'platform',platformY:groundY-80,width:160, style:'bounce'}
-  ];
+// Eye enemy (Huge size)
+const eye = {
+  x: -150, y: 200, w: 175, h: 175,
+  speed: 0.035
+};
 
-  const repeatCount=Math.ceil(30000/posX);
-  for(let r=0;r<repeatCount;r++){
-    for(const seg of segments){
-      if(seg.style==='high') seg.platformY=groundY-150;
-      else if(seg.style==='gap') seg.platformY=groundY-50;
-      else if(seg.style==='spike') seg.platformY=groundY-80;
-      else if(seg.style==='bounce') seg.platformY=groundY-100;
+// Level obstacles
+let obstacles = [];
+const groundY = H - 80;
+let levelLength = 5000;
+const stars = Array.from({length: 60}, () => ({
+  x: Math.random() * W * 2,
+  y: Math.random() * H,
+  r: Math.random() * 1.5 + 0.5,
+  twinkle: Math.random() * 2
+}));
+const eyeVeins = Array.from({length: 10}, () => ({
+  angle: Math.random() * Math.PI * 2,
+  wiggle: Math.random() * Math.PI * 2
+}));
+const goal = {x: levelLength + 400, y: groundY - 40, r: 55};
 
-      obstacles.push({x:posX,y:seg.platformY,w:seg.width,h:20,type:seg.type});
-      obstacles.push({x:posX,y:groundY,w:seg.width,h:80,type:'ground'});
-      
-      if(seg.style==='spike'){
-        const spikeWidth=30;
-        const numSpikes=Math.floor(seg.width/spikeWidth);
-        for(let i=0;i<numSpikes;i++){
-          obstacles.push({x:posX+i*spikeWidth,y:groundY-20,w:spikeWidth,h:20,type:'spike',flipped:true});
+// Generate level
+function generateLevel() {
+  obstacles = [];
+  let x = 0;
+
+  // 1. Safe starting zone
+  while(x < 800) {
+    obstacles.push({x: x, y: groundY, w: 100, h: 80, type: 'ground'});
+    x += 100;
+  }
+
+  // 2. Generate level segments sequentially
+  while(x < levelLength) {
+    const type = Math.random();
+
+    // GAP (15% chance)
+    if(type < 0.15) {
+      // Max jump distance is reduced due to slower speed. Keep gaps smaller (60-100px)
+      const gapWidth = 60 + Math.random() * 40;
+      x += gapWidth;
+      // Ensure solid landing ground after gap
+      obstacles.push({x: x, y: groundY, w: 200, h: 80, type: 'ground'});
+      x += 200;
+    }
+    // PLATFORM (25% chance)
+    else if(type < 0.4) {
+      // Max jump height is ~120px. Keep platforms reachable (60-100px high)
+      const height = 60 + Math.random() * 40;
+      const width = 150 + Math.random() * 100;
+
+      // Add platform
+      obstacles.push({x: x, y: groundY - height, w: width, h: 20, type: 'platform'});
+      // Add ground underneath
+      obstacles.push({x: x, y: groundY, w: width, h: 80, type: 'ground'});
+
+      // Maybe put a spike on the platform? (20% chance)
+      if(Math.random() < 0.2) {
+        obstacles.push({x: x + width/2 - 15, y: groundY - height - 20, w: 30, h: 20, type: 'spike'});
+      }
+
+      x += width;
+    }
+    // SPIKE ON GROUND (20% chance)
+    else if(type < 0.6) {
+      // Solid ground with a spike in the middle
+      obstacles.push({x: x, y: groundY, w: 300, h: 80, type: 'ground'});
+      obstacles.push({x: x + 135, y: groundY - 20, w: 30, h: 20, type: 'spike'});
+      x += 300;
+    }
+    // PLAIN GROUND (40% chance)
+    else {
+      obstacles.push({x: x, y: groundY, w: 100, h: 80, type: 'ground'});
+      x += 100;
+    }
+  }
+
+  // End level safely
+  obstacles.push({x: x, y: groundY, w: 500, h: 80, type: 'ground'});
+  goal.x = x + 250;
+  goal.y = groundY - 40;
+}
+
+// Input
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+
+  // Jump controls: Space, W, Up arrow
+  if(['w',' ','arrowup'].includes(e.key.toLowerCase())) {
+    e.preventDefault();
+    if(gameRunning && player.grounded) {
+      player.vy = player.jumpForce;
+      player.grounded = false;
+    }
+  }
+
+  // Enter to start/restart
+  if(e.key === 'Enter') {
+    e.preventDefault();
+    startGame();
+  }
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+// Collision detection
+function collision(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// Update player
+function updatePlayer() {
+  // Auto-run to the right
+  player.x += player.speed;
+
+  // Gravity
+  player.vy += 0.8;
+  player.y += player.vy;
+
+  // Rotation when in air
+  if(!player.grounded) {
+    player.rotation += 0.15;
+  } else {
+    player.rotation = Math.round(player.rotation / (Math.PI/2)) * (Math.PI/2);
+  }
+
+  // Check collisions
+  player.grounded = false;
+  for(let o of obstacles) {
+    if(collision(player, o)) {
+      if(o.type === 'spike') {
+        gameOver();
+        return;
+      }
+      if(o.type === 'ground' || o.type === 'platform') {
+        if(player.vy > 0 && player.y + player.h - player.vy < o.y + 5) {
+          player.y = o.y - player.h;
+          player.vy = 0;
+          player.grounded = true;
         }
       }
-      posX+=seg.width+50;
     }
   }
-  for(let i=0;i<5;i++){ obstacles.push({x:posX,y:groundY,w:100,h:80,type:'ground'}); posX+=100; }
-  goal.x=posX+50; goal.y=groundY-40;
+
+  // Fall off screen = death
+  if(player.y > H + 50) gameOver();
+
+  // Check goal reach
+  const goalBox = {
+    x: goal.x - goal.r,
+    y: goal.y - goal.r,
+    w: goal.r * 2,
+    h: goal.r * 2
+  };
+  if(collision(player, goalBox)) {
+    reachGoal();
+    return;
+  }
+
+  // Update camera to follow player
+  camera = player.x - 200;
 }
 
-const keys={};
-window.addEventListener('keydown',e=>{
-  keys[e.key.toLowerCase()]=true;
-  if(['w',' ','arrowup'].includes(e.key.toLowerCase())){
-    if(gameRunning){
-      if(player.grounded){
-        player.vy=player.jumpForce; player.grounded=false; player.doubleJump=true;
-      } else if(player.doubleJump){
-        player.vy=player.jumpForce; player.doubleJump=false;
-      }
+// Update eye
+function updateEye() {
+  const desiredX = Math.max(player.x - eye.w * 0.9, camera - eye.w * 0.6);
+  const desiredY = player.y - eye.h / 2 + 10;
+
+  const catchUp = Math.min(0.1, eye.speed + score / 25000);
+  eye.x += (desiredX - eye.x) * catchUp;
+  eye.y += (desiredY - eye.y) * catchUp;
+
+  // Maintain a safe trailing distance so the player is never caught
+  const minTrailing = eye.w * 0.75;
+  if(player.x - (eye.x + eye.w) < minTrailing) {
+    eye.x = player.x - eye.w - minTrailing;
+  }
+
+  // Keep eye within viewable bounds
+  if(eye.x < camera - eye.w * 0.6) eye.x = camera - eye.w * 0.6;
+  if(eye.x + eye.w > camera + W - 60) eye.x = camera + W - 60 - eye.w;
+}
+
+// Render
+function draw() {
+  // Clear with gradient background
+  const gradient = x.createLinearGradient(0, 0, 0, H);
+  gradient.addColorStop(0, '#071228');
+  gradient.addColorStop(1, '#020817');
+  x.fillStyle = gradient;
+  x.fillRect(0, 0, W, H);
+
+  // Star field with subtle parallax
+  twinkle += 0.01;
+  x.save();
+  x.globalAlpha = 0.7;
+  for(const star of stars) {
+    const parallaxX = ((star.x - camera * 0.2) % (W * 2) + W * 2) % (W * 2);
+    const brightness = 0.6 + Math.sin(twinkle + star.twinkle) * 0.3;
+    x.fillStyle = `rgba(180, 220, 255, ${brightness})`;
+    x.beginPath();
+    x.arc(parallaxX - W, star.y, star.r, 0, Math.PI * 2);
+    x.fill();
+  }
+  x.restore();
+
+  x.save();
+  x.translate(-camera, 0);
+
+  // Draw obstacles
+  for(let o of obstacles) {
+    if(o.x + o.w < camera - 100 || o.x > camera + W + 100) continue;
+
+    if(o.type === 'ground') {
+      const groundGradient = x.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
+      groundGradient.addColorStop(0, '#0e2f4f');
+      groundGradient.addColorStop(1, '#0a233a');
+      x.fillStyle = groundGradient;
+      x.fillRect(o.x, o.y, o.w, o.h);
+      x.fillStyle = 'rgba(122, 252, 255, 0.08)';
+      x.fillRect(o.x, o.y, o.w, 6);
+    } else if(o.type === 'platform') {
+      const platGradient = x.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
+      platGradient.addColorStop(0, '#81b8ff');
+      platGradient.addColorStop(1, '#4f86ff');
+      x.fillStyle = platGradient;
+      x.fillRect(o.x, o.y, o.w, o.h);
+      x.strokeStyle = 'rgba(255,255,255,0.25)';
+      x.strokeRect(o.x, o.y, o.w, o.h);
+    } else if(o.type === 'spike') {
+      x.fillStyle = '#ff5b5b';
+      x.shadowColor = 'rgba(255,91,91,0.4)';
+      x.shadowBlur = 12;
+      x.beginPath();
+      x.moveTo(o.x, o.y + o.h);
+      x.lineTo(o.x + o.w/2, o.y);
+      x.lineTo(o.x + o.w, o.y + o.h);
+      x.closePath();
+      x.fill();
+      x.shadowBlur = 0;
     }
   }
-  if(e.key==='Enter'){ startGame();} 
-});
-window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
 
-function collision(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+  // Draw goal portal
+  if(goal.x < camera + W + 200) {
+    const time = performance.now() * 0.001;
+    x.save();
+    x.translate(goal.x, goal.y);
+    const portalPulse = 1 + Math.sin(time * 3) * 0.08;
+    x.scale(portalPulse, portalPulse);
 
-function updatePlayer(){
-  if(keys['a']||keys['arrowleft']) player.x-=player.speed;
-  if(keys['d']||keys['arrowright']) player.x+=player.speed;
-  player.vy+=2.2; player.y+=player.vy;
-  player.grounded=false;
-  let lowestCollision=null;
-  for(let o of obstacles){
-    if(collision(player,o)){
-      if(o.type==='spike'){ resetPlayer(); return; }
-      if(o.type==='ground'||o.type==='platform'){ 
-        if(player.vy>0 && player.y+player.h-player.vy<o.y+5){ 
-          if(!lowestCollision || o.y<lowestCollision.y) lowestCollision=o; 
-        } 
-      }
+    const ringGradient = x.createRadialGradient(0, 0, goal.r * 0.3, 0, 0, goal.r);
+    ringGradient.addColorStop(0, 'rgba(122, 252, 255, 0.9)');
+    ringGradient.addColorStop(1, 'rgba(80, 140, 255, 0.2)');
+    x.fillStyle = ringGradient;
+    x.beginPath();
+    x.arc(0, 0, goal.r, 0, Math.PI * 2);
+    x.fill();
+
+    x.strokeStyle = 'rgba(122, 252, 255, 0.9)';
+    x.lineWidth = 6;
+    x.beginPath();
+    x.arc(0, 0, goal.r * 0.78, 0, Math.PI * 2);
+    x.stroke();
+
+    x.rotate(time * 2);
+    x.fillStyle = 'rgba(255,255,255,0.7)';
+    for(let i = 0; i < 4; i++) {
+      x.save();
+      x.rotate((Math.PI / 2) * i);
+      x.beginPath();
+      x.moveTo(0, -goal.r * 0.4);
+      x.lineTo(goal.r * 0.12, 0);
+      x.lineTo(0, goal.r * 0.4);
+      x.lineTo(-goal.r * 0.12, 0);
+      x.closePath();
+      x.fill();
+      x.restore();
     }
+
+    x.rotate(time * -3);
+    x.fillStyle = 'rgba(122, 252, 255, 0.85)';
+    x.beginPath();
+    x.arc(0, 0, goal.r * 0.35, 0, Math.PI * 2);
+    x.fill();
+
+    x.restore();
   }
-  if(lowestCollision){ player.y=lowestCollision.y-player.h; player.vy=0; player.grounded=true; player.doubleJump=true; }
-  if(collision(player, {x:eye.x, y:eye.y, w:eye.w, h:eye.h})){ resetPlayer(); return; }
-  if(player.y>H+50) resetPlayer();
-  const goalBox={x:goal.x-goal.r,y:goal.y-goal.r,w:goal.r*2,h:goal.r*2}; if(collision(player,goalBox)) reachGoal();
-  camera=player.x-200;
-}
 
-function updateEye(){
-  const dx=player.x-(eye.x+eye.w/2);
-  const dy=player.y-(eye.y+eye.h/2);
-  const dist=Math.sqrt(dx*dx+dy*dy);
-  const speed=eye.speed;
-  if(dist>0){ eye.x+=dx/dist*speed; eye.y+=dy/dist*speed; }
-}
+  // Draw player (rotating cube)
+  x.save();
+  x.translate(player.x + player.w/2, player.y + player.h/2);
+  x.rotate(player.rotation);
+  const playerGradient = x.createLinearGradient(-player.w/2, -player.h/2, player.w/2, player.h/2);
+  playerGradient.addColorStop(0, '#7afcff');
+  playerGradient.addColorStop(1, '#5d9cff');
+  x.fillStyle = playerGradient;
+  x.fillRect(-player.w/2, -player.h/2, player.w, player.h);
+  x.strokeStyle = 'rgba(255,255,255,0.35)';
+  x.lineWidth = 2;
+  x.strokeRect(-player.w/2, -player.h/2, player.w, player.h);
+  x.restore();
 
-function draw(){
-  x.fillStyle='#071022'; x.fillRect(0,0,W,H);
-  x.save(); x.translate(-camera,0);
-  for(let o of obstacles){
-    if(o.type==='ground'){ x.fillStyle='#0e2f4f'; x.fillRect(o.x,o.y,o.w,o.h); }
-    else if(o.type==='platform'){ x.fillStyle='#81b8ff'; x.fillRect(o.x,o.y,o.w,o.h); }
-    else if(o.type==='spike'){ x.fillStyle='#ff5b5b'; x.beginPath();
-      if(o.flipped){ x.moveTo(o.x,o.y+o.h); x.lineTo(o.x+o.w/2,o.y); x.lineTo(o.x+o.w,o.y+o.h); } 
-      else { x.moveTo(o.x,o.y); x.lineTo(o.x+o.w/2,o.y+o.h); x.lineTo(o.x+o.w,o.y); }
-      x.closePath(); x.fill(); }
+  // Draw eye enemy
+  const auraPulse = 1 + Math.sin(performance.now() * 0.002) * 0.12;
+  const auraRadius = eye.w * 0.65 * auraPulse;
+  const auraGradient = x.createRadialGradient(
+    eye.x + eye.w/2, eye.y + eye.h/2, eye.w * 0.3,
+    eye.x + eye.w/2, eye.y + eye.h/2, auraRadius
+  );
+  auraGradient.addColorStop(0, 'rgba(255, 122, 122, 0.6)');
+  auraGradient.addColorStop(1, 'rgba(255, 60, 60, 0)');
+  x.fillStyle = auraGradient;
+  x.beginPath();
+  x.arc(eye.x + eye.w/2, eye.y + eye.h/2, auraRadius, 0, Math.PI * 2);
+  x.fill();
+
+  const eyeGradient = x.createRadialGradient(
+    eye.x + eye.w/2, eye.y + eye.h/2, eye.w * 0.2,
+    eye.x + eye.w/2, eye.y + eye.h/2, eye.w/2
+  );
+  eyeGradient.addColorStop(0, '#ff7676');
+  eyeGradient.addColorStop(1, '#ff2a2a');
+  x.fillStyle = eyeGradient;
+  x.beginPath();
+  x.arc(eye.x + eye.w/2, eye.y + eye.h/2, eye.w/2, 0, Math.PI * 2);
+  x.fill();
+
+  // Eye white
+  x.fillStyle = '#fff';
+  x.beginPath();
+  x.arc(eye.x + eye.w/2, eye.y + eye.h/2, eye.w/3, 0, Math.PI * 2);
+  x.fill();
+
+  // Eye veins
+  const veinTime = performance.now() * 0.001;
+  x.save();
+  x.translate(eye.x + eye.w/2, eye.y + eye.h/2);
+  x.strokeStyle = 'rgba(255, 100, 100, 0.5)';
+  x.lineWidth = 2;
+  for(const vein of eyeVeins) {
+    const dynamicAngle = vein.angle + Math.sin(veinTime * 2 + vein.wiggle) * 0.2;
+    const innerRadius = eye.w * 0.1;
+    const outerRadius = eye.w * 0.45;
+    const controlRadius = (innerRadius + outerRadius) / 2;
+    const jitter = Math.sin(veinTime * 3 + vein.wiggle) * eye.w * 0.05;
+    x.beginPath();
+    x.moveTo(Math.cos(dynamicAngle) * innerRadius, Math.sin(dynamicAngle) * innerRadius);
+    x.quadraticCurveTo(
+      Math.cos(dynamicAngle) * controlRadius + jitter,
+      Math.sin(dynamicAngle) * controlRadius + jitter,
+      Math.cos(dynamicAngle) * outerRadius,
+      Math.sin(dynamicAngle) * outerRadius
+    );
+    x.stroke();
   }
-  x.fillStyle='#7afcff'; x.fillRect(player.x,player.y,player.w,player.h);
+  x.restore();
 
-  const eyeCenterX=eye.x+eye.w/2, eyeCenterY=eye.y+eye.h/2;
-  x.fillStyle='#ff2a2a'; x.beginPath(); x.arc(eyeCenterX,eyeCenterY,eye.w/2,0,Math.PI*2); x.fill();
-  const angle=Math.atan2(player.y-eyeCenterY, player.x-eyeCenterX);
-  const pupilOffset=eye.w/5;
-  const pupilSize=eye.w/8;
-  const pupilX=eyeCenterX+Math.cos(angle)*pupilOffset;
-  const pupilY=eyeCenterY+Math.sin(angle)*pupilOffset;
-  x.fillStyle='#000'; x.beginPath(); x.arc(pupilX,pupilY,pupilSize,0,Math.PI*2); x.fill();
+  // Pupil pointing at player
+  const angle = Math.atan2(player.y - (eye.y + eye.h/2), player.x - (eye.x + eye.w/2));
+  const pupilOffset = eye.w/5;
+  const pupilSize = eye.w/8;
+  x.fillStyle = '#000';
+  x.beginPath();
+  x.arc(
+    eye.x + eye.w/2 + Math.cos(angle) * pupilOffset,
+    eye.y + eye.h/2 + Math.sin(angle) * pupilOffset,
+    pupilSize, 0, Math.PI * 2
+  );
+  x.fill();
 
   x.restore();
-  if(!gameRunning && countdown>0){
-    x.fillStyle='#fff'; x.font='72px Inter, system-ui'; x.textAlign='center';
-    x.fillText(Math.ceil(countdown), W/2, H/2);
+
+  // UI
+  x.fillStyle = '#dff6ff';
+  x.font = '24px Inter, system-ui';
+  x.fillText('Distance: ' + Math.floor(player.x / 10), 20, 40);
+
+  // Progress bar
+  const progress = Math.min(1, player.x / goal.x);
+  x.fillStyle = 'rgba(122, 252, 255, 0.15)';
+  x.fillRect(20, 55, 200, 10);
+  const barGradient = x.createLinearGradient(20, 55, 220, 55);
+  barGradient.addColorStop(0, '#7afcff');
+  barGradient.addColorStop(1, '#81b5ff');
+  x.fillStyle = barGradient;
+  x.fillRect(20, 55, 200 * progress, 10);
+}
+
+// Game loop
+function gameLoop() {
+  if(!gameRunning) return;
+
+  updatePlayer();
+  updateEye();
+  draw();
+
+  score = player.x;
+
+  requestAnimationFrame(gameLoop);
+}
+
+// Game over
+function gameOver() {
+  gameRunning = false;
+  if(score > bestScore) {
+    bestScore = Math.floor(score);
+    localStorage.setItem('eyeChaseBest', bestScore);
+    document.getElementById('best').textContent = bestScore;
   }
+  document.getElementById('msg').innerHTML = 'You Died — Press Enter to restart';
+  document.getElementById('msg').style.display = 'block';
 }
 
-function resetPlayer(){
-  cancelAnimationFrame(gameLoopId);
-  player.x=150; player.y=466; player.vy=0; player.grounded=false; player.doubleJump=true;
-  eye.x=150-250; eye.y=466-50;
-  camera=0; countdown=3; gameRunning=false;
-  document.getElementById('msg').innerHTML='You Died — Press Enter to restart';
-  document.getElementById('msg').style.display='block';
-}
-
-function gameLoop(){
-  if(!gameRunning){
-    if(countdown>0){ countdown-=0.016; draw(); gameLoopId=requestAnimationFrame(gameLoop); return; }
-    gameRunning=true; document.getElementById('msg').style.display='none';
+function reachGoal() {
+  if(goalReached) return;
+  goalReached = true;
+  gameRunning = false;
+  if(score > bestScore) {
+    bestScore = Math.floor(score);
+    localStorage.setItem('eyeChaseBest', bestScore);
+    document.getElementById('best').textContent = bestScore;
   }
-  updatePlayer(); updateEye(); draw(); score=player.x; gameLoopId=requestAnimationFrame(gameLoop);
+  document.getElementById('msg').innerHTML = 'Level Complete! — Press Enter to restart';
+  document.getElementById('msg').style.display = 'block';
 }
 
-function reachGoal(){ gameRunning=false; countdown=3; document.getElementById('msg').innerHTML='Level Complete! — Press Enter to restart'; document.getElementById('msg').style.display='block';}
-
-function startGame(){ 
-  cancelAnimationFrame(gameLoopId);
-  player.x=150; player.y=466; player.vy=0; player.grounded=false; player.doubleJump=true;
-  eye.x=150-250; eye.y=466-50; camera=0; 
-  countdown=3; 
-  generateLevel(); 
+// Start game
+function startGame() {
+  player.x = 150;
+  player.y = 466; // Start on ground
+  player.vy = 0;
+  player.rotation = 0;
+  player.grounded = false;
+  eye.x = -150;
+  eye.y = 200;
+  eye.w = 175;
+  eye.h = 175;
+  eye.speed = 0.035;
+  camera = 0;
+  score = 0;
+  generateLevel();
+  goalReached = false;
+  gameRunning = true;
+  document.getElementById('msg').style.display = 'none';
   gameLoop();
 }
 
-document.getElementById('startBtn').onclick=startGame;
-document.getElementById('restartBtn').onclick=startGame;
+// Button handlers
+document.getElementById('startBtn').onclick = startGame;
+document.getElementById('restartBtn').onclick = startGame;
+c.ondblclick = startGame;
+
+// Initial setup
+generateLevel();
+draw();
 </script>
-</body>
-</html>
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Eye Chase — Platformer (Extended Level)</title>
-<style>
-:root{--bg:#071022;--ground:#0d2a3f;--player:#7afcff;--plat:#6ea8ff;--spike:#ff5b5b;--eye:#ff2a2a;--pupil:#000;--bounce:#7cff7a}
-html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071022,#030717);color:#dff6ff;display:flex;align-items:center;justify-content:center}
-.wrap{width:min(1024px,96vw);padding:18px}
-.hud{display:flex;gap:12px;align-items:center;margin-bottom:8px}
-button{background:#1b2a44;color:#dff6ff;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
-.muted{color:#9fbff9;font-size:13px}
-canvas{background:linear-gradient(180deg,#071228,#031021);display:block;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
-.overlay{position:absolute;left:0;right:0;text-align:center;color:#fff}
-</style>
-</head>
-<body>
-<div class="wrap">
-<div class="hud">
-<button id="startBtn">Start</button>
-<button id="restartBtn">Restart</button>
-<div class="muted">Move: A/D or Left/Right • Jump: Space / W / Up • Start/Restart: Enter</div>
-<div style="flex:1"></div>
-<div class="muted">Best: <span id="best">0</span></div>
-</div>
-<div style="position:relative">
-<canvas id="c" width="1024" height="576" tabindex="0" aria-label="Platformer eye chase"></canvas>
-<div id="msg" class="overlay" style="top:40%;font-size:28px;display:none"></div>
-</div>
-<script>
-const c=document.getElementById('c');
-const x=c.getContext('2d');
-const W=1024,H=576;
-
-let gameRunning=false,score=0,bestScore=localStorage.getItem('eyeChaseBest')||0;
-document.getElementById('best').textContent=bestScore;
-let camera=0,goalReached=false,countdown=3,gameLoopId=null;
-
-const player={x:150,y:466,w:30,h:30,vy:0,speed:3,jumpForce:-22,grounded:false,rotation:0,doubleJump:true};
-const eye={x:150-250,y:466-50,w:175,h:175,speed:3};
-let obstacles=[];
-const groundY=H-80;
-let goal={x:0,y:groundY-40,r:55};
-
-function generateLevel(){
-  obstacles=[];
-  let posX=0;
-  for(let i=0;i<8;i++){ obstacles.push({x:posX,y:groundY,w:100,h:80,type:'ground'}); posX+=100; }
-  
-  const segments=[
-    {type:'platform',platformY:groundY-60,width:180, style:'high'},
-    {type:'platform',platformY:groundY-90,width:150, style:'gap'},
-    {type:'platform',platformY:groundY-70,width:200, style:'spike'},
-    {type:'platform',platformY:groundY-80,width:160, style:'bounce'}
-  ];
-
-  const repeatCount=Math.ceil(30000/posX);
-  for(let r=0;r<repeatCount;r++){
-    for(const seg of segments){
-      if(seg.style==='high') seg.platformY=groundY-150;
-      else if(seg.style==='gap') seg.platformY=groundY-50;
-      else if(seg.style==='spike') seg.platformY=groundY-80;
-      else if(seg.style==='bounce') seg.platformY=groundY-100;
-
-      obstacles.push({x:posX,y:seg.platformY,w:seg.width,h:20,type:seg.type});
-      obstacles.push({x:posX,y:groundY,w:seg.width,h:80,type:'ground'});
-      
-      if(seg.style==='spike'){
-        const spikeWidth=30;
-        const numSpikes=Math.floor(seg.width/spikeWidth);
-        for(let i=0;i<numSpikes;i++){
-          obstacles.push({x:posX+i*spikeWidth,y:groundY-20,w:spikeWidth,h:20,type:'spike',flipped:true});
-        }
-      }
-      posX+=seg.width+50;
-    }
-  }
-  for(let i=0;i<5;i++){ obstacles.push({x:posX,y:groundY,w:100,h:80,type:'ground'}); posX+=100; }
-  goal.x=posX+50; goal.y=groundY-40;
-}
-
-const keys={};
-window.addEventListener('keydown',e=>{
-  keys[e.key.toLowerCase()]=true;
-  if(['w',' ','arrowup'].includes(e.key.toLowerCase())){
-    if(gameRunning){
-      if(player.grounded){
-        player.vy=player.jumpForce; player.grounded=false; player.doubleJump=true;
-      } else if(player.doubleJump){
-        player.vy=player.jumpForce; player.doubleJump=false;
-      }
-    }
-  }
-  if(e.key==='Enter'){ startGame();} 
-});
-window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
-
-function collision(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
-
-function updatePlayer(){
-  if(keys['a']||keys['arrowleft']) player.x-=player.speed;
-  if(keys['d']||keys['arrowright']) player.x+=player.speed;
-  player.vy+=2.2; player.y+=player.vy;
-  player.grounded=false;
-  let lowestCollision=null;
-  for(let o of obstacles){
-    if(collision(player,o)){
-      if(o.type==='spike'){ resetPlayer(); return; }
-      if(o.type==='ground'||o.type==='platform'){ 
-        if(player.vy>0 && player.y+player.h-player.vy<o.y+5){ 
-          if(!lowestCollision || o.y<lowestCollision.y) lowestCollision=o; 
-        } 
-      }
-    }
-  }
-  if(lowestCollision){ player.y=lowestCollision.y-player.h; player.vy=0; player.grounded=true; player.doubleJump=true; }
-  if(collision(player, {x:eye.x, y:eye.y, w:eye.w, h:eye.h})){ resetPlayer(); return; }
-  if(player.y>H+50) resetPlayer();
-  const goalBox={x:goal.x-goal.r,y:goal.y-goal.r,w:goal.r*2,h:goal.r*2}; if(collision(player,goalBox)) reachGoal();
-  camera=player.x-200;
-}
-
-function updateEye(){
-  const dx=player.x-(eye.x+eye.w/2);
-  const dy=player.y-(eye.y+eye.h/2);
-  const dist=Math.sqrt(dx*dx+dy*dy);
-  const speed=eye.speed;
-  if(dist>0){ eye.x+=dx/dist*speed; eye.y+=dy/dist*speed; }
-}
-
-function draw(){
-  x.fillStyle='#071022'; x.fillRect(0,0,W,H);
-  x.save(); x.translate(-camera,0);
-  for(let o of obstacles){
-    if(o.type==='ground'){ x.fillStyle='#0e2f4f'; x.fillRect(o.x,o.y,o.w,o.h); }
-    else if(o.type==='platform'){ x.fillStyle='#81b8ff'; x.fillRect(o.x,o.y,o.w,o.h); }
-    else if(o.type==='spike'){ x.fillStyle='#ff5b5b'; x.beginPath();
-      if(o.flipped){ x.moveTo(o.x,o.y+o.h); x.lineTo(o.x+o.w/2,o.y); x.lineTo(o.x+o.w,o.y+o.h); } 
-      else { x.moveTo(o.x,o.y); x.lineTo(o.x+o.w/2,o.y+o.h); x.lineTo(o.x+o.w,o.y); }
-      x.closePath(); x.fill(); }
-  }
-  x.fillStyle='#7afcff'; x.fillRect(player.x,player.y,player.w,player.h);
-
-  const eyeCenterX=eye.x+eye.w/2, eyeCenterY=eye.y+eye.h/2;
-  x.fillStyle='#ff2a2a'; x.beginPath(); x.arc(eyeCenterX,eyeCenterY,eye.w/2,0,Math.PI*2); x.fill();
-  const angle=Math.atan2(player.y-eyeCenterY, player.x-eyeCenterX);
-  const pupilOffset=eye.w/5;
-  const pupilSize=eye.w/8;
-  const pupilX=eyeCenterX+Math.cos(angle)*pupilOffset;
-  const pupilY=eyeCenterY+Math.sin(angle)*pupilOffset;
-  x.fillStyle='#000'; x.beginPath(); x.arc(pupilX,pupilY,pupilSize,0,Math.PI*2); x.fill();
-
-  x.restore();
-  if(!gameRunning && countdown>0){
-    x.fillStyle='#fff'; x.font='72px Inter, system-ui'; x.textAlign='center';
-    x.fillText(Math.ceil(countdown), W/2, H/2);
-  }
-}
-
-function resetPlayer(){
-  cancelAnimationFrame(gameLoopId);
-  player.x=150; player.y=466; player.vy=0; player.grounded=false; player.doubleJump=true;
-  eye.x=150-250; eye.y=466-50;
-  camera=0; countdown=3; gameRunning=false;
-  document.getElementById('msg').innerHTML='You Died — Press Enter to restart';
-  document.getElementById('msg').style.display='block';
-}
-
-function gameLoop(){
-  if(!gameRunning){
-    if(countdown>0){ countdown-=0.016; draw(); gameLoopId=requestAnimationFrame(gameLoop); return; }
-    gameRunning=true; document.getElementById('msg').style.display='none';
-  }
-  updatePlayer(); updateEye(); draw(); score=player.x; gameLoopId=requestAnimationFrame(gameLoop);
-}
-
-function reachGoal(){ gameRunning=false; countdown=3; document.getElementById('msg').innerHTML='Level Complete! — Press Enter to restart'; document.getElementById('msg').style.display='block';}
-
-function startGame(){ 
-  cancelAnimationFrame(gameLoopId);
-  player.x=150; player.y=466; player.vy=0; player.grounded=false; player.doubleJump=true;
-  eye.x=150-250; eye.y=466-50; camera=0; 
-  countdown=3; 
-  generateLevel(); 
-  gameLoop();
-}
-
-document.getElementById('startBtn').onclick=startGame;
-document.getElementById('restartBtn').onclick=startGame;
-</script>
-</body>
-</html>
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Eye Chase — Platformer (Extended Level)</title>
-<style>
-:root{--bg:#071022;--ground:#0d2a3f;--player:#7afcff;--plat:#6ea8ff;--spike:#ff5b5b;--eye:#ff2a2a;--pupil:#000;--bounce:#7cff7a}
-html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071022,#030717);color:#dff6ff;display:flex;align-items:center;justify-content:center}
-.wrap{width:min(1024px,96vw);padding:18px}
-.hud{display:flex;gap:12px;align-items:center;margin-bottom:8px}
-button{background:#1b2a44;color:#dff6ff;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
-.muted{color:#9fbff9;font-size:13px}
-canvas{background:linear-gradient(180deg,#071228,#031021);display:block;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
-.overlay{position:absolute;left:0;right:0;text-align:center;color:#fff}
-</style>
-</head>
-<body>
-<div class="wrap">
-<div class="hud">
-<button id="startBtn">Start</button>
-<button id="restartBtn">Restart</button>
-<div class="muted">Move: A/D or Left/Right • Jump: Space / W / Up • Start/Restart: Enter</div>
-<div style="flex:1"></div>
-<div class="muted">Best: <span id="best">0</span></div>
-</div>
-<div style="position:relative">
-<canvas id="c" width="1024" height="576" tabindex="0" aria-label="Platformer eye chase"></canvas>
-<div id="msg" class="overlay" style="top:40%;font-size:28px;display:none"></div>
-</div>
-<script>
-const c=document.getElementById('c');
-const x=c.getContext('2d');
-const W=1024,H=576;
-
-let gameRunning=false,score=0,bestScore=localStorage.getItem('eyeChaseBest')||0;
-document.getElementById('best').textContent=bestScore;
-let camera=0,goalReached=false,countdown=3,gameLoopId=null;
-
-const player={x:150,y:466,w:30,h:30,vy:0,speed:3,jumpForce:-22,grounded:false,rotation:0,doubleJump:true};
-const eye={x:150-250,y:466-50,w:175,h:175,speed:3};
-let obstacles=[];
-const groundY=H-80;
-let goal={x:0,y:groundY-40,r:55};
-
-function generateLevel(){
-  obstacles=[];
-  let posX=0;
-  for(let i=0;i<8;i++){ obstacles.push({x:posX,y:groundY,w:100,h:80,type:'ground'}); posX+=100; }
-  
-  const segments=[
-    {type:'platform',platformY:groundY-60,width:180, style:'high'},
-    {type:'platform',platformY:groundY-90,width:150, style:'gap'},
-    {type:'platform',platformY:groundY-70,width:200, style:'spike'},
-    {type:'platform',platformY:groundY-80,width:160, style:'bounce'}
-  ];
-
-  const repeatCount=Math.ceil(30000/posX);
-  for(let r=0;r<repeatCount;r++){
-    for(const seg of segments){
-      if(seg.style==='high') seg.platformY=groundY-150;
-      else if(seg.style==='gap') seg.platformY=groundY-50;
-      else if(seg.style==='spike') seg.platformY=groundY-80;
-      else if(seg.style==='bounce') seg.platformY=groundY-100;
-
-      obstacles.push({x:posX,y:seg.platformY,w:seg.width,h:20,type:seg.type});
-      obstacles.push({x:posX,y:groundY,w:seg.width,h:80,type:'ground'});
-      
-      if(seg.style==='spike'){
-        const spikeWidth=30;
-        const numSpikes=Math.floor(seg.width/spikeWidth);
-        for(let i=0;i<numSpikes;i++){
-          obstacles.push({x:posX+i*spikeWidth,y:groundY-20,w:spikeWidth,h:20,type:'spike',flipped:true});
-        }
-      }
-      posX+=seg.width+50;
-    }
-  }
-  for(let i=0;i<5;i++){ obstacles.push({x:posX,y:groundY,w:100,h:80,type:'ground'}); posX+=100; }
-  goal.x=posX+50; goal.y=groundY-40;
-}
-
-const keys={};
-window.addEventListener('keydown',e=>{
-  keys[e.key.toLowerCase()]=true;
-  if(['w',' ','arrowup'].includes(e.key.toLowerCase())){
-    if(gameRunning){
-      if(player.grounded){
-        player.vy=player.jumpForce; player.grounded=false; player.doubleJump=true;
-      } else if(player.doubleJump){
-        player.vy=player.jumpForce; player.doubleJump=false;
-      }
-    }
-  }
-  if(e.key==='Enter'){ startGame();} 
-});
-window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
-
-function collision(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
-
-function updatePlayer(){
-  if(keys['a']||keys['arrowleft']) player.x-=player.speed;
-  if(keys['d']||keys['arrowright']) player.x+=player.speed;
-  player.vy+=2.2; player.y+=player.vy;
-  player.grounded=false;
-  let lowestCollision=null;
-  for(let o of obstacles){
-    if(collision(player,o)){
-      if(o.type==='spike'){ resetPlayer(); return; }
-      if(o.type==='ground'||o.type==='platform'){ 
-        if(player.vy>0 && player.y+player.h-player.vy<o.y+5){ 
-          if(!lowestCollision || o.y<lowestCollision.y) lowestCollision=o; 
-        } 
-      }
-    }
-  }
-  if(lowestCollision){ player.y=lowestCollision.y-player.h; player.vy=0; player.grounded=true; player.doubleJump=true; }
-  if(collision(player, {x:eye.x, y:eye.y, w:eye.w, h:eye.h})){ resetPlayer(); return; }
-  if(player.y>H+50) resetPlayer();
-  const goalBox={x:goal.x-goal.r,y:goal.y-goal.r,w:goal.r*2,h:goal.r*2}; if(collision(player,goalBox)) reachGoal();
-  camera=player.x-200;
-}
-
-function updateEye(){
-  const dx=player.x-(eye.x+eye.w/2);
-  const dy=player.y-(eye.y+eye.h/2);
-  const dist=Math.sqrt(dx*dx+dy*dy);
-  const speed=eye.speed;
-  if(dist>0){ eye.x+=dx/dist*speed; eye.y+=dy/dist*speed; }
-}
-
-function draw(){
-  x.fillStyle='#071022'; x.fillRect(0,0,W,H);
-  x.save(); x.translate(-camera,0);
-  for(let o of obstacles){
-    if(o.type==='ground'){ x.fillStyle='#0e2f4f'; x.fillRect(o.x,o.y,o.w,o.h); }
-    else if(o.type==='platform'){ x.fillStyle='#81b8ff'; x.fillRect(o.x,o.y,o.w,o.h); }
-    else if(o.type==='spike'){ x.fillStyle='#ff5b5b'; x.beginPath();
-      if(o.flipped){ x.moveTo(o.x,o.y+o.h); x.lineTo(o.x+o.w/2,o.y); x.lineTo(o.x+o.w,o.y+o.h); } 
-      else { x.moveTo(o.x,o.y); x.lineTo(o.x+o.w/2,o.y+o.h); x.lineTo(o.x+o.w,o.y); }
-      x.closePath(); x.fill(); }
-  }
-  x.fillStyle='#7afcff'; x.fillRect(player.x,player.y,player.w,player.h);
-
-  const eyeCenterX=eye.x+eye.w/2, eyeCenterY=eye.y+eye.h/2;
-  x.fillStyle='#ff2a2a'; x.beginPath(); x.arc(eyeCenterX,eyeCenterY,eye.w/2,0,Math.PI*2); x.fill();
-  const angle=Math.atan2(player.y-eyeCenterY, player.x-eyeCenterX);
-  const pupilOffset=eye.w/5;
-  const pupilSize=eye.w/8;
-  const pupilX=eyeCenterX+Math.cos(angle)*pupilOffset;
-  const pupilY=eyeCenterY+Math.sin(angle)*pupilOffset;
-  x.fillStyle='#000'; x.beginPath(); x.arc(pupilX,pupilY,pupilSize,0,Math.PI*2); x.fill();
-
-  x.restore();
-  if(!gameRunning && countdown>0){
-    x.fillStyle='#fff'; x.font='72px Inter, system-ui'; x.textAlign='center';
-    x.fillText(Math.ceil(countdown), W/2, H/2);
-  }
-}
-
-function resetPlayer(){
-  cancelAnimationFrame(gameLoopId);
-  player.x=150; player.y=466; player.vy=0; player.grounded=false; player.doubleJump=true;
-  eye.x=150-250; eye.y=466-50;
-  camera=0; countdown=3; gameRunning=false;
-  document.getElementById('msg').innerHTML='You Died — Press Enter to restart';
-  document.getElementById('msg').style.display='block';
-}
-
-function gameLoop(){
-  if(!gameRunning){
-    if(countdown>0){ countdown-=0.016; draw(); gameLoopId=requestAnimationFrame(gameLoop); return; }
-    gameRunning=true; document.getElementById('msg').style.display='none';
-  }
-  updatePlayer(); updateEye(); draw(); score=player.x; gameLoopId=requestAnimationFrame(gameLoop);
-}
-
-function reachGoal(){ gameRunning=false; countdown=3; document.getElementById('msg').innerHTML='Level Complete! — Press Enter to restart'; document.getElementById('msg').style.display='block';}
-
-function startGame(){ 
-  cancelAnimationFrame(gameLoopId);
-  player.x=150; player.y=466; player.vy=0; player.grounded=false; player.doubleJump=true;
-  eye.x=150-250; eye.y=466-50; camera=0; 
-  countdown=3; 
-  generateLevel(); 
-  gameLoop();
-}
-
-document.getElementById('startBtn').onclick=startGame;
-document.getElementById('restartBtn').onclick=startGame;
-</script>
-</body>
-</html>
