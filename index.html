@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Eye Chase — Platformer (Extended Level)</title>
   <style>
-    :root{--bg:#071022;--ground:#0d2a3f;--player:#7afcff;--plat:#6ea8ff;--spike:#ff5b5b;--eye:#ff2a2a;--bounce:#7cff7a}
+    :root{--bg:#071022;--ground:#0d2a3f;--player:#7afcff;--plat:#6ea8ff;--spike:#ff5b5b;--eye:#ff2a2a;--bounce:#7cff7a;--superbounce:#ff00ff}
     html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071022,#030717);color:#dff6ff;display:flex;align-items:center;justify-content:center}
     .wrap{width:min(1024px,96vw);padding:18px}
     .hud{display:flex;gap:12px;align-items:center;margin-bottom:8px}
@@ -43,6 +43,41 @@
     }
     .touch-btn:active { background: rgba(255, 255, 255, 0.3); }
     .d-pad { display: flex; gap: 15px; }
+
+    /* Editor UI */
+    #editorUI {
+      display: none;
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1b2a44;
+      padding: 10px;
+      border-radius: 12px;
+      border: 1px solid #4f86ff;
+      gap: 8px;
+      flex-wrap: wrap;
+      width: max-content;
+      max-width: 90%;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+      z-index: 100;
+    }
+    .tool-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 6px;
+      border: 1px solid #4f86ff;
+      background: #0d1a2a;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+    .tool-btn:hover { background: #2a4065; }
+    .tool-btn.active { background: #4f86ff; }
+    .tool-sep { width: 1px; background: #4f86ff; margin: 0 4px; }
   </style>
 </head>
 <body>
@@ -51,6 +86,7 @@
       <button id="pauseBtn">⏸ Pause</button>
       <button id="restartBtn">Restart</button>
       <button id="muteBtn">🔊 Music On</button>
+      <button id="editBtn" onclick="toggleEditor()">✎ Edit Level</button>
       <div class="muted">Move: A/D/Arrows • Jump: Space/W/Up</div>
       <div style="flex:1"></div>
       <div class="muted">Coins: <span id="coins">0</span> • Best: <span id="bestCoins">0</span></div>
@@ -65,6 +101,25 @@
         <div style="font-size:32px;margin-bottom:20px;font-weight:bold">Paused</div>
         <button onclick="window.resumeGame()" style="display:block;width:100%;margin:10px 0;background:#4f86ff;font-size:20px;padding:10px">Resume</button>
         <button onclick="window.exitLevel()" style="display:block;width:100%;margin:10px 0;background:#ff5b5b;font-size:20px;padding:10px">Exit Level</button>
+      </div>
+
+      <!-- Editor UI Toolbar -->
+      <div id="editorUI">
+        <button class="tool-btn active" id="toolSelect" title="Select/Move (Del to remove)">✋</button>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" id="toolGround" title="Add Ground">⬛</button>
+        <button class="tool-btn" id="toolPlat" title="Add Platform">➖</button>
+        <button class="tool-btn" id="toolSpike" title="Add Spike">🔺</button>
+        <button class="tool-btn" id="toolCoin" title="Add Coin">🟡</button>
+        <button class="tool-btn" id="toolBounce" title="Add Bounce Pad">🟩</button>
+        <button class="tool-btn" id="toolSuper" title="Add Super Bounce">🟪</button>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" id="toolEraser" title="Eraser (Click to Delete)">🗑</button>
+        <button class="tool-btn" style="width:auto;padding:0 10px;font-size:14px;background:#ff5b5b" onclick="clearLevel()">Clear</button>
+        <div class="tool-sep"></div>
+        <button class="tool-btn" style="width:auto;padding:0 10px;font-size:14px;background:#4f86ff" onclick="saveLevel()">Save</button>
+        <button class="tool-btn" style="width:auto;padding:0 10px;font-size:14px" onclick="exportLevel()">Export</button>
+        <button class="tool-btn" style="width:auto;padding:0 10px;font-size:14px;background:#2e7d32" onclick="toggleEditor()">▶ Play</button>
       </div>
 
       <!-- Touch Controls -->
@@ -88,7 +143,7 @@ let gameState = 'MENU'; // MENU, PLAYING, GAMEOVER, VICTORY
 let score = 0;
 let bestScore = localStorage.getItem('eyeChaseBest') || 0;
 document.getElementById('best').textContent = bestScore;
-let camera = 0;
+let camera = {x: 0, y: 0};
 let twinkle = 0;
 let coins = 0;
 let coinsCollected = [];
@@ -159,6 +214,22 @@ const Audio = {
     gain.connect(this.ctx.destination);
     osc.start();
     osc.stop(this.ctx.currentTime + 0.2);
+  },
+  playSuperBounce: function() {
+    if(!this.enabled) return;
+    this.init();
+    // Higher pitched spring sound
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(900, this.ctx.currentTime + 0.3);
+    gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.3);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.3);
   },
   playDie: function() {
     if(!this.enabled) return;
@@ -286,13 +357,16 @@ const player = {
   friction: 0.85,
   jumpForce: -14,
   grounded: false,
-  rotation: 0
+  rotation: 0,
+  jumps: 0,
+  maxJumps: 2,
+  jumpRequest: false
 };
 
 // Eye enemy (Huge size)
 const eye = {
   x: -150, y: 200, w: 175, h: 175,
-  speed: 2.0 // Fixed pixels per frame
+  speed: 1.5 // Reduced speed for "Easy" mode
 };
 
 // Level obstacles
@@ -312,36 +386,29 @@ const eyeVeins = Array.from({length: 10}, () => ({
 }));
 const goal = {x: levelLength + 400, y: groundY - 40, r: 55};
 
-// Generate level
-function generateLevel() {
-  obstacles = [];
-  coinObjects = [];
+// --- LEVEL DATA & EDITOR ---
+// Edit these functions to design your levels!
 
-  // Helper to add ground segment
-  const addGround = (x, w) => obstacles.push({x, y: groundY, w, h: 80, type: 'ground'});
-  // Helper to add platform
-  const addPlat = (x, y, w) => {
-    obstacles.push({x, y: groundY - y, w, h: 20, type: 'platform'});
-    obstacles.push({x, y: groundY, w, h: 80, type: 'ground'}); // Support pillar
-  };
-  // Helper to add spike
-  const addSpike = (x) => obstacles.push({x, y: groundY - 20, w: 30, h: 20, type: 'spike'});
-  // Helper to add bounce pad
-  const addBounce = (x) => {
-    obstacles.push({x, y: groundY, w: 200, h: 80, type: 'ground'});
-    obstacles.push({x: x + 85, y: groundY - 15, w: 30, h: 15, type: 'bouncePad'});
-  };
-  // Helper to add coin
-  let coinId = 0;
-  const addCoin = (x, y) => coinObjects.push({x, y: groundY - y, r: 12, id: 'coin_' + (coinId++)});
+// Helper functions (Global for easy access)
+let coinIdCounter = 0;
+const addGround = (x, w) => obstacles.push({x, y: groundY, w, h: 80, type: 'ground'});
+const addPlat = (x, y, w) => {
+  obstacles.push({x, y: groundY - y, w, h: 20, type: 'platform'});
+  obstacles.push({x, y: groundY, w, h: 80, type: 'ground'}); // Support pillar
+};
+const addSpike = (x) => obstacles.push({x, y: groundY - 20, w: 30, h: 20, type: 'spike'});
+const addBounce = (x) => {
+  obstacles.push({x, y: groundY, w: 200, h: 80, type: 'ground'});
+  obstacles.push({x: x + 85, y: groundY - 15, w: 30, h: 15, type: 'bouncePad'});
+};
+const addSuperBounce = (x) => {
+  obstacles.push({x, y: groundY, w: 200, h: 80, type: 'ground'});
+  obstacles.push({x: x + 85, y: groundY - 15, w: 30, h: 15, type: 'superBouncePad'});
+};
+const addCoin = (x, y) => coinObjects.push({x, y: groundY - y, r: 12, id: 'coin_' + (coinIdCounter++)});
 
-  let x = 0;
-
-  // 1. Start: Safe running area
-  addGround(x, 800);
-  x += 800;
-
-  if (currentLevel === 1) {
+const Levels = {
+  1: (x) => {
     // Level 1: Intro (Short & Easy) ~2500px
     addGround(x, 200); x += 280; // Gap
     addCoin(x - 40, 75);
@@ -360,8 +427,26 @@ function generateLevel() {
     x += 250;
 
     addGround(x, 500);
-  }
-  else if (currentLevel === 2) {
+    
+    // Extension +2000px: Simple platforming fun
+    // Staircase up
+    addPlat(x, 80, 200); addCoin(x+100, 120); x += 200;
+    addPlat(x, 140, 200); x += 200;
+    addPlat(x, 200, 200); addCoin(x+100, 240); x += 250;
+    
+    // Bounce jump
+    addBounce(x); x += 250;
+    
+    // High ground run
+    addPlat(x, 200, 600); 
+    addCoin(x+150, 240); addCoin(x+300, 240); addCoin(x+450, 240);
+    x += 600;
+    
+    // Drop down to finish
+    addGround(x, 500); x += 500;
+    return x;
+  },
+  2: (x) => {
     // Level 2: Verticality (Medium) ~3500px
     addPlat(x, 50, 150); x += 200;
     addPlat(x, 100, 150); addCoin(x + 75, 130); x += 200;
@@ -374,7 +459,9 @@ function generateLevel() {
     addPlat(x, 120, 200); x += 250;
     addPlat(x, 120, 200); addCoin(x + 100, 150); x += 250;
 
-    x += 280; // Gap
+    // Bridge the gap
+    x += 90; addPlat(x, 100, 100); x += 190; 
+    
     addPlat(x, 80, 150); x += 200;
     addPlat(x, 140, 150); x += 200;
     addCoin(x + 75, 170);
@@ -382,12 +469,25 @@ function generateLevel() {
     addGround(x, 400);
     addSpike(x + 200);
     x += 400;
-  }
-  else if (currentLevel === 3) {
+
+    // Extension +2000px
+    addGround(x, 500); x += 500;
+    
+    // Extended platform run with spikes
+    addPlat(x, 100, 1000); 
+    addCoin(x + 500, 140); 
+    // Spikes on top of the long platform
+    obstacles.push({x: x + 300, y: groundY - 100 - 20, w: 30, h: 20, type: 'spike'});
+    obstacles.push({x: x + 700, y: groundY - 100 - 20, w: 30, h: 20, type: 'spike'});
+    x += 1000;
+
+    addGround(x, 500); addSpike(x + 250); x += 500;
+    return x;
+  },
+  3: (x) => {
     // Level 3: Spikes (Hard) ~4500px
-    // Eased difficulty: Reduced gaps, wider landings
     addGround(x, 250); addSpike(x + 125); x += 250;
-    addGround(x, 250); addSpike(x + 125); x += 250;
+    addGround(x, 250); x += 250; // Removed spike
     addGround(x, 250); addSpike(x + 125); addCoin(x + 125, 80); x += 250;
 
     x += 240; // Reduced gap from 280
@@ -397,8 +497,8 @@ function generateLevel() {
     addBounce(x); x += 200;
     addPlat(x, 100, 200); addCoin(x + 100, 130); x += 250; // Wider platform
 
-    // Double Spike - More space
-    addGround(x, 600); addSpike(x + 200); addSpike(x + 400); x += 600;
+    // Double Spike - More space (Nerfed: Removed second spike)
+    addGround(x, 600); addSpike(x + 200); x += 600;
 
     // Tight jumps - Fixed with Bounce Pads
     x += 200;
@@ -408,10 +508,20 @@ function generateLevel() {
     addBounce(x); x += 250; // Bounce over second gap
 
     addGround(x, 200); addCoin(x + 100, 80); x += 250;
-  }
-  else if (currentLevel === 4) {
+
+    // Extension +2000px
+    for(let i=0; i<4; i++) {
+      addGround(x, 400); x += 400; // Removed spikes
+      if(i === 2) { // Add Super Bounce in middle
+         addSuperBounce(x); x += 200; 
+      } else {
+         x += 100; // Gap
+      }
+    }
+    return x;
+  },
+  4: (x) => {
     // Level 4: Sky High (Expert) ~5500px
-    // Added bounce pads to bridge large gaps
     addGround(x, 150); x += 200;
     addBounce(x); x += 250; // Bounce over first gap
 
@@ -421,12 +531,14 @@ function generateLevel() {
     addGround(x, 150); addCoin(x - 40, 75); x += 290;
 
     addBounce(x); addCoin(x + 100, 250); x += 250;
-    x += 320;
+    // Fix impossible gap
+    x += 160; addPlat(x, 100, 80); x += 160;
 
     // High platforms
     addPlat(x, 150, 100); x += 250;
     addPlat(x, 180, 100); x += 250;
-    x += 320;
+    // Fix impossible gap
+    x += 160; addPlat(x, 100, 80); x += 160;
 
     addGround(x, 200); addSpike(x + 100); x += 200;
     x += 200;
@@ -436,19 +548,34 @@ function generateLevel() {
 
     addBounce(x); x += 250;
     addPlat(x, 200, 150); addCoin(x + 75, 230); x += 250;
-  }
-  else {
+
+    // Extension +2000px
+    addGround(x, 200); x += 200;
+    addSuperBounce(x); x += 400; // Super jump!
+    addPlat(x, 200, 800); addCoin(x+400, 240); x += 800;
+    x += 200;
+    addSuperBounce(x); x += 400;
+    
+    // One more for good measure
+    addGround(x, 200); x += 200;
+    addSuperBounce(x); x += 400;
+    return x;
+  },
+  5: (x) => {
     // Level 5: The Marathon (Master) ~7000px
 
     // Segment 1: Speed
     addPlat(x, 60, 150); x += 200;
-    x += 280;
+    // Fix impossible gap
+    x += 140; addPlat(x, 60, 80); x += 140;
+
     addGround(x, 200); addSpike(x + 100); x += 200;
 
     // Segment 2: Bounce
     addBounce(x); addCoin(x + 100, 240); x += 200;
     addPlat(x, 100, 150); x += 200;
-    x += 280; // Reduced gap
+    // Fix impossible gap
+    x += 140; addPlat(x, 80, 80); x += 140; // Reduced gap
 
     // Segment 3: Precision
     addGround(x, 300); addSpike(x + 150); x += 300;
@@ -469,6 +596,38 @@ function generateLevel() {
     addSpike(x + 400);
     addSpike(x + 600);
     x += 800;
+
+    // Extension +2000px
+    addGround(x, 2000);
+    addSuperBounce(x - 1500); // Add one here for fun
+    addSuperBounce(x - 800);  // Another one!
+    // Nerfed spikes
+    // for(let i=0; i<5; i++) addSpike(x + 300 + i*300);
+    x += 2000;
+    return x;
+  }
+};
+
+// Generate level
+function generateLevel() {
+  obstacles = [];
+  coinObjects = [];
+  coinIdCounter = 0;
+
+  let x = 0;
+
+  // 1. Start: Safe running area
+  addGround(x, 800);
+  x += 800;
+
+  if(typeof currentLevel === 'string' && currentLevel.startsWith('custom_')) {
+    // Already loaded by playCustomLevel, just need to set Goal
+    let maxX = 0;
+    obstacles.forEach(o => maxX = Math.max(maxX, o.x + o.w));
+    x = maxX;
+  }
+  else if (Levels[currentLevel]) {
+    x = Levels[currentLevel](x);
   }
 
   // Goal area
@@ -482,12 +641,300 @@ const keys = {};
 window.addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
 
+  // Jump Request (for Double Jump)
+  if([' ','w','arrowup'].includes(e.key.toLowerCase()) && !e.repeat) {
+    player.jumpRequest = true;
+  }
+
+  // Restart on Enter
+  if(e.key === 'Enter') {
+    if(['GAMEOVER', 'VICTORY'].includes(gameState)) {
+      startGame();
+    } else if(gameState === 'PAUSED') {
+      window.resumeGame();
+    }
+  }
+
   // Prevent scrolling with arrow keys
   if(['arrowdown','arrowleft','arrowright','arrowup',' '].includes(e.key.toLowerCase())) {
     e.preventDefault();
   }
 });
 window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+// Dev Tool: Click to log coordinates
+// ... (Keep existing implementation or remove if conflicting, let's keep it for now but disable in Editor mode)
+
+// --- EDITOR LOGIC ---
+let editorMode = 'SELECT'; // SELECT, GROUND, PLAT, SPIKE, COIN, BOUNCE, SUPER, ERASER
+let selectedObj = null;
+let hoveredObj = null; // For tooltip
+let dragOffset = {x:0, y:0};
+let editorCamStart = {x:0, y:0};
+let dragStart = {x:0, y:0};
+let isDraggingCam = false;
+let isDraggingObj = false;
+
+function toggleEditor() {
+  if(gameState === 'EDITING') {
+    gameState = 'PLAYING';
+    document.getElementById('editorUI').style.display = 'none';
+    document.getElementById('editBtn').classList.remove('active');
+    document.getElementById('editBtn').textContent = '✎ Edit Level';
+    // Reset player to safe start or just resume
+    Music.start();
+  } else {
+    gameState = 'EDITING';
+    document.getElementById('editorUI').style.display = 'flex';
+    document.getElementById('editBtn').classList.add('active');
+    document.getElementById('editBtn').textContent = 'Stop Editing';
+    document.getElementById('pauseMenu').style.display = 'none';
+    Music.stop();
+  }
+}
+
+function setTool(tool) {
+  editorMode = tool;
+  document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+  const map = {
+    'SELECT': 'toolSelect', 'GROUND': 'toolGround', 'PLAT': 'toolPlat',
+    'SPIKE': 'toolSpike', 'COIN': 'toolCoin', 'BOUNCE': 'toolBounce', 'SUPER': 'toolSuper', 'ERASER': 'toolEraser'
+  };
+  if(map[tool]) document.getElementById(map[tool]).classList.add('active');
+  selectedObj = null;
+}
+
+// Bind toolbar buttons
+document.getElementById('toolSelect').onclick = () => setTool('SELECT');
+document.getElementById('toolGround').onclick = () => setTool('GROUND');
+document.getElementById('toolPlat').onclick = () => setTool('PLAT');
+document.getElementById('toolSpike').onclick = () => setTool('SPIKE');
+document.getElementById('toolCoin').onclick = () => setTool('COIN');
+document.getElementById('toolBounce').onclick = () => setTool('BOUNCE');
+document.getElementById('toolSuper').onclick = () => setTool('SUPER');
+document.getElementById('toolEraser').onclick = () => setTool('ERASER');
+
+window.clearLevel = function() {
+  if(confirm('Clear entire level?')) {
+    obstacles = [];
+    coinObjects = [];
+    // Add starting ground to prevent infinite fall
+    addGround(0, 800);
+  }
+};
+
+window.saveLevel = function() {
+  const name = prompt('Name your level:', 'My Level');
+  if(name) {
+    const list = JSON.parse(localStorage.getItem('eyeChaseLevels') || '[]');
+    const data = { obstacles: obstacles, coins: coinObjects };
+    list.push({ name, data, date: Date.now() });
+    localStorage.setItem('eyeChaseLevels', JSON.stringify(list));
+    alert('Level Saved!');
+  }
+};
+
+window.exportLevel = function() {
+  const data = {
+    obstacles: obstacles.map(o => ({...o})),
+    coins: coinObjects.map(c => ({...c}))
+  };
+  console.log(JSON.stringify(data));
+  alert('Level data exported to Console (F12)');
+};
+
+// Editor Input Handling
+c.addEventListener('mousedown', (e) => {
+  if(gameState !== 'EDITING') return;
+  
+  const rect = c.getBoundingClientRect();
+  const scaleX = c.width / rect.width;
+  const scaleY = c.height / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX + camera.x;
+  const my = (e.clientY - rect.top) * scaleY + camera.y;
+  
+  // Always allow pan with Middle Mouse or Shift+Click
+  // AND allow standard drag-pan if NO tool is selected (or just empty space in SELECT mode?)
+  // Let's just make left-click on empty space in SELECT mode pan the camera
+  let hitObject = false;
+  if(editorMode === 'SELECT' || editorMode === 'ERASER') {
+    // Check if we clicked an object
+    // (Reuse logic below to detect hit)
+    // Actually let's just run selection logic first
+  }
+
+  if(e.button === 1 || (e.button === 0 && e.shiftKey)) {
+    isDraggingCam = true;
+    dragStart = {x: e.clientX, y: e.clientY};
+    editorCamStart = {x: camera.x, y: camera.y};
+    return;
+  }
+
+  if(editorMode === 'SELECT' || editorMode === 'ERASER') {
+    // Try select coin first (smaller target)
+    selectedObj = null;
+    let target = null;
+    
+    for(let c of coinObjects) {
+      if(Math.hypot(c.x - mx, c.y - my) < c.r + 5) {
+        target = c;
+        target._type = 'coin'; // Marker
+        break;
+      }
+    }
+    if(!target) {
+      // Try select obstacle
+      for(let i = obstacles.length - 1; i >= 0; i--) {
+        let o = obstacles[i];
+        if(mx >= o.x && mx <= o.x + o.w && my >= o.y && my <= o.y + o.h) {
+          target = o;
+          target._type = 'obstacle';
+          break;
+        }
+      }
+    }
+    
+    if(target) {
+       if(editorMode === 'ERASER') {
+          // Delete immediately
+          if(target._type === 'coin') {
+             const idx = coinObjects.indexOf(target);
+             if(idx > -1) coinObjects.splice(idx, 1);
+          } else {
+             const idx = obstacles.indexOf(target);
+             if(idx > -1) obstacles.splice(idx, 1);
+          }
+          selectedObj = null;
+          hitObject = true; // prevent pan
+       } else {
+          // Select Mode
+          selectedObj = target;
+          dragOffset = {x: mx - target.x, y: my - target.y};
+          hitObject = true;
+          isDraggingObj = true;
+       }
+    }
+    
+    // If we didn't hit anything in SELECT mode, start panning
+    if(!hitObject) {
+        isDraggingCam = true;
+        dragStart = {x: e.clientX, y: e.clientY};
+        editorCamStart = {x: camera.x, y: camera.y};
+    }
+  } else {
+    // Place object
+    // Snap to grid (20px)
+    const gx = Math.floor(mx / 20) * 20;
+    const gy = Math.floor(my / 20) * 20;
+    
+    if(editorMode === 'GROUND') addGround(gx, 200);
+    else if(editorMode === 'PLAT') addPlat(0, groundY - gy, 100); // y param is height from ground
+    else if(editorMode === 'SPIKE') obstacles.push({x: gx, y: gy, w: 30, h: 20, type: 'spike'});
+    else if(editorMode === 'COIN') coinObjects.push({x: gx, y: gy, r: 12, id: 'c'+Date.now()});
+    else if(editorMode === 'BOUNCE') {
+        obstacles.push({x: gx, y: gy, w: 30, h: 15, type: 'bouncePad'});
+    }
+    else if(editorMode === 'SUPER') {
+        obstacles.push({x: gx, y: gy, w: 30, h: 15, type: 'superBouncePad'});
+    }
+    
+    // Modify the last added object to position exactly at click if needed, 
+    // but add* helpers use ground-relative logic. 
+    // Let's fix generic placement for non-helper types:
+    if(['SPIKE','BOUNCE','SUPER'].includes(editorMode)) {
+       // already pushed with gy
+    } else if(editorMode === 'GROUND') {
+       // addGround uses fixed Y, let's override
+       obstacles[obstacles.length-1].y = gy;
+       obstacles[obstacles.length-1].x = gx;
+    } else if(editorMode === 'PLAT') {
+       // addPlat pushes 2 objects (plat + pillar). Let's just push a platform rect
+       obstacles.pop(); obstacles.pop(); // remove helper result
+       obstacles.push({x: gx, y: gy, w: 100, h: 20, type: 'platform'});
+    }
+  }
+});
+
+window.addEventListener('mousemove', (e) => {
+  if(gameState !== 'EDITING') return;
+
+  // Update hovered object for tooltip
+  const rect = c.getBoundingClientRect();
+  const scaleX = c.width / rect.width;
+  const scaleY = c.height / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX + camera.x;
+  const my = (e.clientY - rect.top) * scaleY + camera.y;
+  
+  hoveredObj = null;
+  // Check coins
+  for(let c of coinObjects) {
+    if(Math.hypot(c.x - mx, c.y - my) < c.r + 5) {
+      hoveredObj = c; hoveredObj._type = 'coin'; break;
+    }
+  }
+  // Check obstacles
+  if(!hoveredObj) {
+    for(let i = obstacles.length - 1; i >= 0; i--) {
+      let o = obstacles[i];
+      if(mx >= o.x && mx <= o.x + o.w && my >= o.y && my <= o.y + o.h) {
+        hoveredObj = o; hoveredObj._type = 'obstacle'; break;
+      }
+    }
+  }
+
+  if(isDraggingCam) {
+    const dx = (e.clientX - dragStart.x) * (c.width / c.clientWidth);
+    const dy = (e.clientY - dragStart.y) * (c.height / c.clientHeight);
+    camera.x = editorCamStart.x - dx;
+    camera.y = editorCamStart.y - dy;
+    return;
+  }
+
+  if(selectedObj && isDraggingObj) {
+    const rect = c.getBoundingClientRect();
+    const scaleX = c.width / rect.width;
+    const scaleY = c.height / rect.height;
+    const mx = (e.clientX - rect.left) * scaleX + camera.x;
+    const my = (e.clientY - rect.top) * scaleY + camera.y;
+
+    // Free movement with Alt key, otherwise snap to grid
+    if(e.altKey) {
+      selectedObj.x = mx - dragOffset.x;
+      selectedObj.y = my - dragOffset.y;
+    } else {
+      selectedObj.x = Math.floor((mx - dragOffset.x) / 10) * 10;
+      selectedObj.y = Math.floor((my - dragOffset.y) / 10) * 10;
+    }
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  // Don't clear selection immediately if we just clicked (so we can delete)
+  isDraggingCam = false;
+  isDraggingObj = false;
+});
+
+window.addEventListener('keydown', (e) => {
+  if(gameState === 'EDITING') {
+    // Delete selected object
+    if((e.key === 'Delete' || e.key === 'Backspace') && selectedObj) {
+      if(selectedObj._type === 'coin') {
+        const idx = coinObjects.indexOf(selectedObj);
+        if(idx > -1) coinObjects.splice(idx, 1);
+      } else {
+        const idx = obstacles.indexOf(selectedObj);
+        if(idx > -1) obstacles.splice(idx, 1);
+      }
+      selectedObj = null;
+    }
+    
+    // Move camera with arrows
+    if(e.key === 'ArrowLeft') camera.x -= 20;
+    if(e.key === 'ArrowRight') camera.x += 20;
+    if(e.key === 'ArrowUp') camera.y -= 20;
+    if(e.key === 'ArrowDown') camera.y += 20;
+  }
+});
 
 // Collision detection
 function collision(a, b) {
@@ -565,11 +1012,20 @@ function updatePlayer() {
 
   player.x += player.vx;
 
-  // Auto-Jump (Bunny Hop)
-  if((keys[' '] || keys['w'] || keys['arrowup']) && player.grounded) {
-    player.vy = player.jumpForce;
-    player.grounded = false;
-    Audio.playJump();
+  // Jump Logic (Double Jump enabled)
+  if(player.jumpRequest) {
+    if (player.grounded) {
+      player.vy = player.jumpForce;
+      player.grounded = false;
+      player.jumps = 1;
+      Audio.playJump();
+    } else if (player.jumps < player.maxJumps) {
+      player.vy = player.jumpForce * 0.85; // Second jump
+      player.jumps++;
+      player.rotation = 0; // Reset rotation for feel
+      Audio.playJump();
+    }
+    player.jumpRequest = false;
   }
 
   // Ensure player doesn't go backwards too far (optional, but keeps level flow)
@@ -605,13 +1061,22 @@ function updatePlayer() {
         // Launch player upward
         player.vy = -22;
         player.grounded = false;
+        player.jumps = 1; // Treat bounce as first jump (allows 1 more)
         Audio.playBounce();
+      }
+      else if(o.type === 'superBouncePad') {
+        // Super launch
+        player.vy = -35;
+        player.grounded = false;
+        player.jumps = 1;
+        Audio.playSuperBounce();
       }
       if(o.type === 'ground' || o.type === 'platform') {
         if(player.vy > 0 && player.y + player.h - player.vy < o.y + 5) {
           player.y = o.y - player.h;
           player.vy = 0;
           player.grounded = true;
+          player.jumps = 0; // Reset jumps
         }
       }
     }
@@ -653,12 +1118,20 @@ function updatePlayer() {
   }
 
   // Update camera to follow player
-  camera = player.x - 200;
+  camera.x = player.x - 200;
+  
+  // Vertical camera scrolling (Only go up if player is high up)
+  // Default ground level view is y=0 (since we draw ground at H-80)
+  // If player goes above a threshold (e.g. top 30% of screen), move camera up
+  const targetCamY = Math.min(0, player.y - H * 0.3);
+  
+  // Smooth lerp
+  camera.y += (targetCamY - camera.y) * 0.1;
 }
 
 // Update eye
 function updateEye() {
-  const desiredX = Math.max(player.x - eye.w * 0.9, camera - eye.w * 0.6);
+  const desiredX = Math.max(player.x - eye.w * 0.9, camera.x - eye.w * 0.6);
   const desiredY = player.y - eye.h / 2 + 10;
 
   // Constant speed movement (no acceleration)
@@ -677,9 +1150,89 @@ function updateEye() {
   }
 
   // Keep eye within viewable bounds
-  if(eye.x < camera - eye.w * 0.6) eye.x = camera - eye.w * 0.6;
-  if(eye.x + eye.w > camera + W - 60) eye.x = camera + W - 60 - eye.w;
+  if(eye.x < camera.x - eye.w * 0.6) eye.x = camera.x - eye.w * 0.6;
+  if(eye.x + eye.w > camera.x + W - 60) eye.x = camera.x + W - 60 - eye.w;
 }
+
+// My Levels UI (Hidden by default)
+// Using existing HTML structure? No, need to inject it or draw it.
+// Let's inject a modal div for easier management than canvas drawing.
+if(!document.getElementById('levelList')) {
+  const div = document.createElement('div');
+  div.id = 'levelList';
+  div.className = 'overlay';
+  div.style.cssText = 'display:none;background:#0d1a2a;border:2px solid #4f86ff;padding:20px;border-radius:12px;top:50%;left:50%;transform:translate(-50%,-50%);width:400px;max-height:400px;overflow-y:auto;z-index:200';
+  div.innerHTML = `
+    <h2 style="margin-top:0">My Levels</h2>
+    <div id="levelListContent" style="display:flex;flex-direction:column;gap:10px"></div>
+    <button onclick="closeLevelList()" style="margin-top:20px;background:#ff5b5b;width:100%">Close</button>
+  `;
+  document.querySelector('.wrap').appendChild(div);
+}
+
+window.openLevelList = function() {
+  const list = JSON.parse(localStorage.getItem('eyeChaseLevels') || '[]');
+  const content = document.getElementById('levelListContent');
+  content.innerHTML = '';
+  
+  if(list.length === 0) {
+    content.innerHTML = '<div style="color:#888">No saved levels yet.</div>';
+  } else {
+    list.forEach((lvl, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:10px;background:#1b2a44;padding:10px;border-radius:8px;align-items:center';
+      row.innerHTML = `
+        <div style="flex:1;font-weight:bold">${lvl.name || 'Level ' + (i+1)}</div>
+        <button onclick="playCustomLevel(${i})" style="background:#2e7d32;padding:5px 10px;font-size:14px">Play</button>
+        <button onclick="editCustomLevel(${i})" style="background:#4f86ff;padding:5px 10px;font-size:14px">Edit</button>
+        <button onclick="deleteCustomLevel(${i})" style="background:#ff5b5b;padding:5px 10px;font-size:14px">✖</button>
+      `;
+      content.appendChild(row);
+    });
+  }
+  document.getElementById('levelList').style.display = 'block';
+};
+
+window.closeLevelList = function() {
+  document.getElementById('levelList').style.display = 'none';
+};
+
+window.playCustomLevel = function(index) {
+  const list = JSON.parse(localStorage.getItem('eyeChaseLevels') || '[]');
+  if(list[index]) {
+    currentLevel = 'custom_' + index;
+    // Load data into global vars
+    obstacles = list[index].data.obstacles;
+    coinObjects = list[index].data.coins;
+    closeLevelList();
+    startGame();
+  }
+};
+
+window.editCustomLevel = function(index) {
+  playCustomLevel(index); // Load it
+  setTimeout(() => toggleEditor(), 100); // Switch to edit mode
+};
+
+window.deleteCustomLevel = function(index) {
+  if(confirm('Delete this level?')) {
+    const list = JSON.parse(localStorage.getItem('eyeChaseLevels') || '[]');
+    list.splice(index, 1);
+    localStorage.setItem('eyeChaseLevels', JSON.stringify(list));
+    openLevelList(); // Refresh
+  }
+};
+
+window.saveLevel = function() {
+  const name = prompt('Name your level:', 'My Level');
+  if(name) {
+    const list = JSON.parse(localStorage.getItem('eyeChaseLevels') || '[]');
+    const data = { obstacles, coins: coinObjects };
+    list.push({ name, data, date: Date.now() });
+    localStorage.setItem('eyeChaseLevels', JSON.stringify(list));
+    alert('Level Saved!');
+  }
+};
 
 // Draw Menu
 function drawMenu() {
@@ -740,6 +1293,22 @@ function drawMenu() {
   x.textBaseline = 'middle';
   x.fillText('PLAY', W/2, btnY + btnH/2);
 
+  // My Levels Button
+  const myBtnX = W/2 + 120;
+  x.shadowBlur = 20;
+  x.shadowColor = 'rgba(255, 0, 255, 0.4)';
+  x.fillStyle = '#2a1b44';
+  x.strokeStyle = '#ff00ff';
+  x.lineWidth = 2;
+  x.beginPath();
+  x.roundRect(myBtnX, btnY, 160, btnH, 30);
+  x.fill();
+  x.stroke();
+
+  x.fillStyle = '#ff00ff';
+  x.font = 'bold 20px Inter, system-ui';
+  x.fillText('MY LEVELS', myBtnX + 80, btnY + btnH/2);
+
   // Credits/Controls
   x.font = '16px Inter, system-ui';
   x.fillStyle = '#9fbff9';
@@ -796,6 +1365,28 @@ function drawLevelSelect() {
     x.fillText('Lvl ' + i, btnX + btnW/2, btnY + btnH/2);
   }
 
+  // Custom Level Button
+  if(localStorage.getItem('eyeChaseCustomLevel')) {
+    const btnX = startX + 1 * (btnW + gap); // Middle col
+    const btnY = startY + 2 * (btnH + gap); // Row 3
+    
+    x.shadowBlur = 10;
+    x.shadowColor = 'rgba(255, 0, 255, 0.3)';
+    x.fillStyle = '#2a1b44';
+    x.beginPath();
+    x.roundRect(btnX, btnY, btnW, btnH, 15);
+    x.fill();
+
+    x.strokeStyle = '#ff00ff';
+    x.lineWidth = 2;
+    x.stroke();
+
+    x.shadowBlur = 0;
+    x.fillStyle = '#ff00ff';
+    x.font = 'bold 28px Inter, system-ui';
+    x.fillText('Custom', btnX + btnW/2, btnY + btnH/2);
+  }
+
   // Back Button (Red Cross)
   const backX = 30;
   const backY = 30;
@@ -838,21 +1429,22 @@ function draw() {
   x.save();
   x.globalAlpha = 0.7;
   for(const star of stars) {
-    const parallaxX = ((star.x - camera * 0.2) % (W * 2) + W * 2) % (W * 2);
+    const parallaxX = ((star.x - camera.x * 0.2) % (W * 2) + W * 2) % (W * 2);
+    const parallaxY = ((star.y - camera.y * 0.1) % H + H) % H; // Slight vertical parallax
     const brightness = 0.6 + Math.sin(twinkle + star.twinkle) * 0.3;
     x.fillStyle = `rgba(180, 220, 255, ${brightness})`;
     x.beginPath();
-    x.arc(parallaxX - W, star.y, star.r, 0, Math.PI * 2);
+    x.arc(parallaxX - W, parallaxY, star.r, 0, Math.PI * 2);
     x.fill();
   }
   x.restore();
 
   x.save();
-  x.translate(-camera, 0);
+  x.translate(-camera.x, -camera.y);
 
   // Draw obstacles
   for(let o of obstacles) {
-    if(o.x + o.w < camera - 100 || o.x > camera + W + 100) continue;
+    if(o.x + o.w < camera.x - 100 || o.x > camera.x + W + 100) continue;
 
     if(o.type === 'ground') {
       const groundGradient = x.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
@@ -860,6 +1452,14 @@ function draw() {
       groundGradient.addColorStop(1, '#0a233a');
       x.fillStyle = groundGradient;
       x.fillRect(o.x, o.y, o.w, o.h);
+      
+      // Ground texture (tech grid)
+      x.fillStyle = 'rgba(122, 252, 255, 0.05)';
+      for(let i=0; i<o.w; i+=40) {
+         x.fillRect(o.x + i, o.y, 2, o.h);
+         x.fillRect(o.x + i + 10, o.y + 10, 4, 4); // Dot
+      }
+      
       x.fillStyle = 'rgba(122, 252, 255, 0.08)';
       x.fillRect(o.x, o.y, o.w, 6);
     } else if(o.type === 'platform') {
@@ -870,6 +1470,15 @@ function draw() {
       x.fillRect(o.x, o.y, o.w, o.h);
       x.strokeStyle = 'rgba(255,255,255,0.25)';
       x.strokeRect(o.x, o.y, o.w, o.h);
+      
+      // Rivets
+      x.fillStyle = 'rgba(0,0,0,0.3)';
+      x.beginPath();
+      x.arc(o.x + 5, o.y + 5, 2, 0, Math.PI*2);
+      x.arc(o.x + o.w - 5, o.y + 5, 2, 0, Math.PI*2);
+      x.arc(o.x + 5, o.y + o.h - 5, 2, 0, Math.PI*2);
+      x.arc(o.x + o.w - 5, o.y + o.h - 5, 2, 0, Math.PI*2);
+      x.fill();
     } else if(o.type === 'spike') {
       x.fillStyle = '#ff5b5b';
       x.shadowColor = 'rgba(255,91,91,0.4)';
@@ -902,6 +1511,46 @@ function draw() {
         x.lineTo(o.x + o.w - 4, lineY);
         x.stroke();
       }
+      // Arrow Up
+      x.fillStyle = 'rgba(255,255,255,0.7)';
+      x.beginPath();
+      x.moveTo(o.x + o.w/2, o.y + 3);
+      x.lineTo(o.x + o.w/2 - 5, o.y + 8);
+      x.lineTo(o.x + o.w/2 + 5, o.y + 8);
+      x.fill();
+    } else if(o.type === 'superBouncePad') {
+      // Draw SUPER bounce pad (purple/pink)
+      const bounceGradient = x.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
+      bounceGradient.addColorStop(0, '#ff00ff');
+      bounceGradient.addColorStop(1, '#800080');
+      x.fillStyle = bounceGradient;
+      x.fillRect(o.x, o.y, o.w, o.h);
+      x.strokeStyle = 'rgba(255,255,255,0.6)';
+      x.lineWidth = 2;
+      x.strokeRect(o.x, o.y, o.w, o.h);
+
+      // Draw horizontal spring lines
+      x.strokeStyle = 'rgba(255,255,255,0.6)';
+      x.lineWidth = 3;
+      for(let i = 1; i < 4; i++) {
+        const lineY = o.y + (o.h / 4) * i;
+        x.beginPath();
+        x.moveTo(o.x + 4, lineY);
+        x.lineTo(o.x + o.w - 4, lineY);
+        x.stroke();
+      }
+      // Double Arrow Up
+      x.fillStyle = 'rgba(255,255,255,0.8)';
+      x.beginPath();
+      x.moveTo(o.x + o.w/2, o.y + 2);
+      x.lineTo(o.x + o.w/2 - 5, o.y + 6);
+      x.lineTo(o.x + o.w/2 + 5, o.y + 6);
+      x.fill();
+      x.beginPath();
+      x.moveTo(o.x + o.w/2, o.y + 7);
+      x.lineTo(o.x + o.w/2 - 5, o.y + 11);
+      x.lineTo(o.x + o.w/2 + 5, o.y + 11);
+      x.fill();
     }
   }
 
@@ -909,7 +1558,7 @@ function draw() {
   const coinTime = performance.now() * 0.003;
   for(let coin of coinObjects) {
     if(coinsCollected.includes(coin.id)) continue;
-    if(coin.x + coin.r < camera - 50 || coin.x - coin.r > camera + W + 50) continue;
+    if(coin.x + coin.r < camera.x - 50 || coin.x - coin.r > camera.x + W + 50) continue;
 
     x.save();
     x.translate(coin.x, coin.y);
@@ -953,7 +1602,7 @@ function draw() {
   }
 
   // Draw goal portal
-  if(goal.x < camera + W + 200) {
+  if(goal.x < camera.x + W + 200) {
     const time = performance.now() * 0.001;
     x.save();
     x.translate(goal.x, goal.y);
@@ -1121,6 +1770,57 @@ function gameLoop() {
     draw();
 
     score = player.x;
+  } else if(gameState === 'EDITING') {
+    // Draw level without updates
+    draw();
+    
+    // Draw Editor Overlay
+    const ctx = x;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1;
+    
+    // Grid
+    const gridSize = 100;
+    const offsetX = -camera.x % gridSize;
+    const offsetY = -camera.y % gridSize;
+    
+    ctx.beginPath();
+    for(let i = offsetX; i < W; i += gridSize) {
+      ctx.moveTo(i, 0); ctx.lineTo(i, H);
+    }
+    for(let i = offsetY; i < H; i += gridSize) {
+      ctx.moveTo(0, i); ctx.lineTo(W, i);
+    }
+    ctx.stroke();
+    
+    // Highlight Selection
+    if(selectedObj) {
+      ctx.strokeStyle = '#ff0';
+      ctx.lineWidth = 2;
+      if(selectedObj._type === 'coin') {
+        ctx.beginPath();
+        ctx.arc(selectedObj.x, selectedObj.y, selectedObj.r + 5, 0, Math.PI*2);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(selectedObj.x - 2, selectedObj.y - 2, selectedObj.w + 4, selectedObj.h + 4);
+      }
+    }
+    
+    ctx.restore();
+    ctx.fillRect(10, H - 40, 400, 30);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px monospace';
+    
+    let statusText = 'Mode: ' + editorMode + ' | Drag Space to Pan | Del to Remove';
+    if(hoveredObj) {
+       const type = hoveredObj.type || 'coin';
+       statusText = 'Hovering: ' + type.toUpperCase() + ' | ' + statusText;
+    }
+    ctx.fillText(statusText, 20, H - 20);
+    
+    ctx.restore();
+    
   } else if(gameState === 'PAUSED') {
     draw();
   } else {
@@ -1147,7 +1847,14 @@ function gameOver() {
     localStorage.setItem('eyeChaseBestCoins', bestCoins);
     document.getElementById('bestCoins').textContent = bestCoins;
   }
-  document.getElementById('msg').innerHTML = 'You Died';
+  document.getElementById('msg').innerHTML = `
+    <div style="margin-bottom:20px;font-size:32px;font-weight:bold">You Died</div>
+    <div style="margin-bottom:20px;font-size:18px">Press Enter to restart</div>
+    <div style="display:flex;gap:20px;justify-content:center">
+      <button onclick="startGame()" style="background:#4f86ff;font-size:20px;padding:12px 24px">Try Again</button>
+      <button onclick="window.exitLevel()" style="background:#ff5b5b;font-size:20px;padding:12px 24px">Exit Level</button>
+    </div>
+  `;
   document.getElementById('msg').style.display = 'block';
 }
 
@@ -1195,7 +1902,7 @@ function startGame() {
   eye.w = 175;
   eye.h = 175;
   eye.speed = 2.0; // Fixed slow speed
-  camera = 0;
+  camera = {x: 0, y: 0};
   score = 0;
   coins = 0;
   coinsCollected = [];
@@ -1204,6 +1911,7 @@ function startGame() {
 
   gameState = 'PLAYING';
   document.getElementById('msg').style.display = 'none';
+  document.getElementById('pauseMenu').style.display = 'none';
   Music.start();
 }
 
@@ -1220,7 +1928,7 @@ document.getElementById('pauseBtn').onclick = function() {
 };
 
 document.getElementById('restartBtn').onclick = function() {
-  if(gameState === 'PLAYING' || gameState === 'PAUSED') {
+  if(['PLAYING', 'PAUSED', 'GAMEOVER', 'VICTORY'].includes(gameState)) {
     startGame();
   }
 };
@@ -1303,6 +2011,13 @@ const checkMenuClick = (e) => {
          e.preventDefault();
          gameState = 'LEVEL_SELECT';
       }
+      
+      // Check My Levels Button (W/2 + 120, btnY, 160, 60)
+      const myBtnX = W/2 + 120;
+      if(x >= myBtnX && x <= myBtnX + 160 && y >= btnY && y <= btnY + btnH) {
+         e.preventDefault();
+         openLevelList();
+      }
    } else if(gameState === 'LEVEL_SELECT') {
       // Grid parameters matching drawLevelSelect
       const btnW = 140;
@@ -1321,6 +2036,18 @@ const checkMenuClick = (e) => {
         if(x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH) {
            e.preventDefault();
            currentLevel = i;
+           startGame();
+           return;
+        }
+      }
+
+      // Check Custom Button
+      if(localStorage.getItem('eyeChaseCustomLevel')) {
+        const btnX = startX + 1 * (btnW + gap);
+        const btnY = startY + 2 * (btnH + gap);
+        if(x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH) {
+           e.preventDefault();
+           currentLevel = 'custom';
            startGame();
            return;
         }
@@ -1370,6 +2097,7 @@ window.resumeGame = function() {
 window.exitLevel = function() {
   gameState = 'LEVEL_SELECT';
   document.getElementById('pauseMenu').style.display = 'none';
+  document.getElementById('msg').style.display = 'none'; // Hide game over/victory msg
   document.getElementById('touchControls').style.display = 'none';
   Music.stop();
 };
