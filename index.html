@@ -6,13 +6,13 @@
   <title>Eye Chase — Platformer (Extended Level)</title>
   <style>
     :root{--bg:#071022;--ground:#0d2a3f;--player:#7afcff;--plat:#6ea8ff;--spike:#ff5b5b;--eye:#ff2a2a;--bounce:#7cff7a;--superbounce:#ff00ff}
-    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071022,#030717);color:#dff6ff;display:flex;align-items:center;justify-content:center}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071022,#030717);color:#fff;display:flex;align-items:center;justify-content:center; text-shadow: 1px 1px 3px #000;}
     .wrap{width:min(1024px,96vw);padding:18px}
     .hud{display:flex;gap:12px;align-items:center;margin-bottom:8px}
-    button{background:#1b2a44;color:#dff6ff;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
+    button{background:#1b2a44;color:#fff;border:1px solid #4f86ff;padding:8px 10px;border-radius:8px;cursor:pointer;text-shadow:1px 1px 2px #000;box-shadow:0 2px 5px rgba(0,0,0,0.5)}
     button:hover{background:#2a4065}
-    button.active{background:#4f86ff;color:#fff}
-    .muted{color:#9fbff9;font-size:13px}
+    button.active{background:#4f86ff;color:#fff;border:1px solid #fff}
+    .muted{color:#e0e0e0;font-size:13px;text-shadow:1px 1px 2px #000}
     canvas{background:linear-gradient(180deg,#071228,#031021);display:block;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
     .overlay{position:absolute;left:0;right:0;text-align:center;color:#fff}
 
@@ -89,7 +89,8 @@
       <button id="editBtn" onclick="toggleEditor()">✎ Edit Level</button>
       <div class="muted">Move: A/D/Arrows • Jump: Space/W/Up</div>
       <div style="flex:1"></div>
-      <div class="muted">Coins: <span id="coins">0</span> • Best: <span id="bestCoins">0</span></div>
+      <div class="muted" style="color:#4f86ff;font-weight:bold">💎 <span id="diamondDisplay">0</span></div>
+      <div class="muted" style="margin-left:12px">Coins: <span id="coins">0</span> • Best: <span id="bestCoins">0</span></div>
       <div style="margin-left:12px" class="muted">Distance Best: <span id="best">0</span></div>
     </div>
     <div style="position:relative">
@@ -113,6 +114,7 @@
         <button class="tool-btn" id="toolCoin" title="Add Coin">🟡</button>
         <button class="tool-btn" id="toolBounce" title="Add Bounce Pad">🟩</button>
         <button class="tool-btn" id="toolSuper" title="Add Super Bounce">🟪</button>
+        <button class="tool-btn" id="toolPortal" title="Set End Portal">🌀</button>
         <div class="tool-sep"></div>
         <button class="tool-btn" id="toolEraser" title="Eraser (Click to Delete)">🗑</button>
         <button class="tool-btn" style="width:auto;padding:0 10px;font-size:14px;background:#ff5b5b" onclick="clearLevel()">Clear</button>
@@ -149,7 +151,38 @@ let coins = 0;
 let coinsCollected = [];
 let bestCoins = localStorage.getItem('eyeChaseBestCoins') || 0;
 document.getElementById('bestCoins').textContent = bestCoins;
+let totalDiamonds = parseInt(localStorage.getItem('eyeChaseDiamonds')) || 0;
+let completedLevels = JSON.parse(localStorage.getItem('eyeChaseCompletedLevels') || '[]');
+let playerIcon = localStorage.getItem('eyeChasePlayerIcon') || 'default';
 let currentLevel = 1;
+let menuLevelIndex = 1; // Tracks which level page is open in the menu
+
+// Level Metadata
+const LevelInfo = [
+  null, // 0-index unused
+  { name: "INITIATION", diff: "EASY", color: "#7afcff", desc: "The journey begins." },
+  { name: "BOUNCE HOUSE", diff: "EASY", color: "#00ff00", desc: "Boing boing!" },
+  { name: "ASCENSION", diff: "MEDIUM", color: "#4f86ff", desc: "Climb higher." },
+  { name: "FLOATING", diff: "MEDIUM", color: "#00aaff", desc: "Islands in the sky." },
+  { name: "ZIGZAG", diff: "MEDIUM", color: "#ffaa00", desc: "Left, right, jump." },
+  { name: "SPIKED", diff: "HARD", color: "#ff5b5b", desc: "Watch your step." },
+  { name: "VELOCITY", diff: "HARD", color: "#ffaa00", desc: "Keep moving forward." },
+  { name: "ECHO", diff: "HARD", color: "#00ffaa", desc: "Repeat the pattern." },
+  { name: "RHYTHM", diff: "HARD", color: "#ff00aa", desc: "Feel the beat." },
+  { name: "DESCENT", diff: "HARD", color: "#ff5b5b", desc: "What goes up..." },
+  { name: "SPEEDRUN", diff: "HARD", color: "#00ff00", desc: "Gotta go fast." },
+  { name: "SKY HIGH", diff: "TOUGH", color: "#d65bff", desc: "Don't look down." },
+  { name: "ORBIT", diff: "TOUGH", color: "#aa00ff", desc: "Gravity is a suggestion." },
+  { name: "ABYSS", diff: "TOUGH", color: "#440000", desc: "Stare into the void." },
+  { name: "ASCENT II", diff: "TOUGH", color: "#4f86ff", desc: "Higher and higher." },
+  { name: "MARATHON", diff: "INSANE", color: "#ff00ff", desc: "The ultimate test." },
+  { name: "TERMINAL", diff: "INSANE", color: "#ff0000", desc: "End of the line." },
+  { name: "GAUNTLET II", diff: "INSANE", color: "#5500ff", desc: "Harder than before." },
+  { name: "SPIKEFIELD", diff: "INSANE", color: "#ff0000", desc: "Watch your feet." },
+  { name: "PRECISION", diff: "EXTREME", color: "#ffffff", desc: "Pixel perfect." },
+  { name: "KAIZO", diff: "EXTREME", color: "#000000", desc: "Unfair." },
+  { name: "THE END", diff: "DEMON", color: "#660000", desc: "Final destination." }
+];
 
 // --- AUDIO SYSTEM ---
 const Audio = {
@@ -443,11 +476,23 @@ const Levels = {
     x += 600;
     
     // Drop down to finish
-    addGround(x, 500); x += 500;
+    addGround(x, 200); x += 200;
+    addPlat(x, 50, 100); x += 150; // Little hop
+    addGround(x, 150); x += 150;
     return x;
   },
   2: (x) => {
-    // Level 2: Verticality (Medium) ~3500px
+      // BOUNCE HOUSE (Old Lvl 11)
+      addGround(x, 200); x+=200;
+      for(let i=0; i<8; i++) {
+          addBounce(x); x+=200;
+          addCoin(x, 150); x+=100;
+      }
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  3: (x) => {
+    // Level 2 (Old): Verticality (Medium) ~3500px
     addPlat(x, 50, 150); x += 200;
     addPlat(x, 100, 150); addCoin(x + 75, 130); x += 200;
     addPlat(x, 50, 150); x += 200;
@@ -473,19 +518,39 @@ const Levels = {
     // Extension +2000px
     addGround(x, 500); x += 500;
     
-    // Extended platform run with spikes
-    addPlat(x, 100, 1000); 
-    addCoin(x + 500, 140); 
-    // Spikes on top of the long platform
-    obstacles.push({x: x + 300, y: groundY - 100 - 20, w: 30, h: 20, type: 'spike'});
-    obstacles.push({x: x + 700, y: groundY - 100 - 20, w: 30, h: 20, type: 'spike'});
-    x += 1000;
+    // Zig-Zag Climb
+    addPlat(x, 50, 150); x += 200;
+    addPlat(x, 120, 150); x += 200;
+    addPlat(x, 190, 150); addCoin(x+75, 220); x += 200;
+    addPlat(x, 120, 150); x += 200;
+    addPlat(x, 50, 150); x += 200;
 
     addGround(x, 500); addSpike(x + 250); x += 500;
     return x;
   },
-  3: (x) => {
-    // Level 3: Spikes (Hard) ~4500px
+  4: (x) => {
+      // FLOATING (Old Lvl 14)
+      addGround(x, 200); x+=200;
+      addPlat(x, 150, 150); x+=200;
+      addPlat(x, 250, 150); x+=200;
+      addPlat(x, 350, 150); x+=200;
+      addPlat(x, 250, 150); x+=200;
+      addPlat(x, 150, 150); x+=200;
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  5: (x) => {
+      // ZIGZAG (Old Lvl 18)
+      addGround(x, 200); x+=200;
+      for(let i=0; i<4; i++) {
+          addPlat(x, 100, 150); x+=150;
+          addPlat(x, 250, 150); x+=150;
+      }
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  6: (x) => {
+    // Level 3 (Old): Spikes (Hard) ~4500px
     addGround(x, 250); addSpike(x + 125); x += 250;
     addGround(x, 250); x += 250; // Removed spike
     addGround(x, 250); addSpike(x + 125); addCoin(x + 125, 80); x += 250;
@@ -511,17 +576,81 @@ const Levels = {
 
     // Extension +2000px
     for(let i=0; i<4; i++) {
-      addGround(x, 400); x += 400; // Removed spikes
-      if(i === 2) { // Add Super Bounce in middle
+      addGround(x, 400); 
+      // Safe route above
+      addPlat(x + 100, 80, 200); 
+      if(i%2===0) addSpike(x+200); // Ground spike
+      else addCoin(x+200, 120);
+      
+      x += 400; 
+      if(i === 2) { 
          addSuperBounce(x); x += 200; 
       } else {
-         x += 100; // Gap
+         x += 100; 
       }
     }
     return x;
   },
-  4: (x) => {
-    // Level 4: Sky High (Expert) ~5500px
+  7: (x) => {
+      // VELOCITY (Old Lvl 6)
+      addGround(x, 400); x+=400;
+      for(let i=0; i<5; i++) {
+          addBounce(x); x+=300;
+          addPlat(x, 100, 200); addCoin(x+100, 140); x+=200;
+          addGround(x, 100); x+=100;
+      }
+      addGround(x, 500); x+=500;
+      return x;
+  },
+  8: (x) => {
+      // ECHO (Old Lvl 7)
+      addGround(x, 400); x+=400;
+      for(let i=0; i<3; i++) {
+         addPlat(x, 100, 150); addSpike(x+50); x+=200;
+         addPlat(x, 200, 150); addCoin(x+75, 240); x+=200;
+         addGround(x, 150); x+=150;
+      }
+      addGround(x, 400); x+=400;
+      return x;
+  },
+  9: (x) => {
+      // RHYTHM (Old Lvl 15)
+      addGround(x, 200); x+=200;
+      for(let i=0; i<6; i++) {
+          addGround(x, 100); x+=200; // 100 ground, 100 gap
+          addCoin(x-50, 50);
+      }
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  10: (x) => {
+      // DESCENT (Old Lvl 17)
+      addGround(x, 200); x+=200;
+      addSuperBounce(x); x+=300;
+      addPlat(x, 400, 200); x+=200;
+      addPlat(x, 300, 200); x+=200;
+      addPlat(x, 200, 200); x+=200;
+      addPlat(x, 100, 200); x+=200;
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  11: (x) => {
+      // SPEEDRUN (Old Lvl 20)
+      addGround(x, 400); x+=400;
+      
+      // Fast hops with smaller gaps
+      addBounce(x); x+=250; // Gap 50 (Easy)
+      addBounce(x); x+=250; // Gap 50
+      
+      // Big Jump with landing platform
+      addSuperBounce(x); x+=200;
+      addPlat(x, 250, 200); addCoin(x+100, 290); x+=300; // Catch the super jump
+      
+      addGround(x, 400); x+=400;
+      return x;
+  },
+  12: (x) => {
+    // Level 4 (Old): Sky High (Expert) ~5500px
     addGround(x, 150); x += 200;
     addBounce(x); x += 250; // Bounce over first gap
 
@@ -552,17 +681,51 @@ const Levels = {
     // Extension +2000px
     addGround(x, 200); x += 200;
     addSuperBounce(x); x += 400; // Super jump!
-    addPlat(x, 200, 800); addCoin(x+400, 240); x += 800;
+    
+    // Broken Islands
+    addPlat(x, 200, 150); addCoin(x+75, 240); x += 200;
+    x += 100;
+    addPlat(x, 200, 150); addCoin(x+75, 240); x += 200;
+    x += 100;
+    addPlat(x, 200, 150); addCoin(x+75, 240); x += 200;
+    
     x += 200;
     addSuperBounce(x); x += 400;
     
-    // One more for good measure
     addGround(x, 200); x += 200;
-    addSuperBounce(x); x += 400;
     return x;
   },
-  5: (x) => {
-    // Level 5: The Marathon (Master) ~7000px
+  13: (x) => {
+      // ORBIT (Old Lvl 8)
+      addGround(x, 300); x+=300;
+      addSuperBounce(x); x+=400;
+      addPlat(x, 300, 200); addCoin(x+100, 340); x+=300;
+      addSuperBounce(x); x+=500;
+      addPlat(x, 400, 200); addCoin(x+100, 440); x+=300;
+      addGround(x, 400); x+=400;
+      return x;
+  },
+  14: (x) => {
+      // ABYSS (Old Lvl 9)
+      addGround(x, 200); x+=200;
+      for(let i=0; i<6; i++) {
+          addPlat(x, 50 + i*20, 100); x+=250;
+      }
+      addGround(x, 400); x+=400;
+      return x;
+  },
+  15: (x) => {
+      // ASCENT II (Old Lvl 16)
+      addGround(x, 200); x+=200;
+      for(let i=0; i<5; i++) {
+         addPlat(x, 100 + i*50, 150); x+=150;
+      }
+      addSuperBounce(x); x+=400;
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  16: (x) => {
+    // Level 5 (Old): The Marathon (Master) ~7000px
 
     // Segment 1: Speed
     addPlat(x, 60, 150); x += 200;
@@ -598,13 +761,87 @@ const Levels = {
     x += 800;
 
     // Extension +2000px
-    addGround(x, 2000);
-    addSuperBounce(x - 1500); // Add one here for fun
-    addSuperBounce(x - 800);  // Another one!
-    // Nerfed spikes
-    // for(let i=0; i<5; i++) addSpike(x + 300 + i*300);
-    x += 2000;
+    addGround(x, 400); x += 400;
+    
+    // "The Gauntlet"
+    addPlat(x, 50, 150); x += 200;
+    addBounce(x); x += 250;
+    addPlat(x, 150, 300); 
+    addCoin(x+100, 190); addCoin(x+200, 190); 
+    x += 300;
+    
+    addSuperBounce(x); x += 400; // High launch
+    
+    addPlat(x, 250, 100); x += 150;
+    addPlat(x, 150, 100); x += 150;
+    addPlat(x, 50, 100); x += 150;
+    
+    addGround(x, 300); x += 300;
     return x;
+  },
+  17: (x) => {
+      // TERMINAL (Old Lvl 10)
+      addGround(x, 200); x+=200;
+      addSpike(x+100); addPlat(x, 100, 200); x+=250;
+      addSuperBounce(x); x+=400;
+      addPlat(x, 300, 100); x+=150;
+      addPlat(x, 200, 100); x+=150;
+      addGround(x, 300); addSpike(x+150); x+=300;
+      return x;
+  },
+  18: (x) => {
+      // GAUNTLET II (Old Lvl 13)
+      addGround(x, 200); x+=200;
+      addPlat(x, 100, 400); addSpike(x+200); x+=450;
+      addSuperBounce(x); x+=400;
+      addPlat(x, 300, 400); addSpike(x+200); x+=450;
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  19: (x) => {
+      // SPIKEFIELD (Old Lvl 19)
+      addGround(x, 200); x+=200;
+      for(let i=0; i<10; i++) {
+          addSpike(x+100);
+          addPlat(x, 100, 200); 
+          x+=250;
+      }
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  20: (x) => {
+      // PRECISION (Old Lvl 12)
+      addGround(x, 200); x+=200;
+      for(let i=0; i<10; i++) {
+          addPlat(x, 100, 80); x+=220;
+      }
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  21: (x) => {
+      // KAIZO (Rebalanced: Precision Platforming)
+      addGround(x, 200); x+=200;
+      
+      // Precise jumps on small platforms
+      addPlat(x, 80, 50); x+=140; // Short hop
+      addPlat(x, 160, 50); x+=140; // Up
+      addPlat(x, 80, 50); x+=140; // Down
+      
+      // The "Trap" (Safe bounce)
+      addBounce(x); x+=200;
+      
+      // Final landing
+      addPlat(x, 150, 100); addCoin(x+50, 200); x+=250;
+      addGround(x, 200); x+=200;
+      return x;
+  },
+  22: (x) => {
+      // THE END
+      addGround(x, 1000); 
+      // A victory lap of coins
+      for(let i=0; i<10; i++) addCoin(x + 100 + i*80, 50);
+      x+=1000;
+      return x;
   }
 };
 
@@ -614,20 +851,48 @@ function generateLevel() {
   coinObjects = [];
   coinIdCounter = 0;
 
+  if (typeof currentLevel === 'string' && currentLevel.startsWith('custom_')) {
+    const index = parseInt(currentLevel.split('_')[1]);
+    const list = JSON.parse(localStorage.getItem('eyeChaseLevels') || '[]');
+    if(list[index]) {
+      obstacles = list[index].data.obstacles;
+      coinObjects = list[index].data.coins;
+      
+      // Load goal or calculate default
+      if(list[index].data.goal) {
+         goal.x = list[index].data.goal.x;
+         goal.y = list[index].data.goal.y;
+      } else {
+         let maxX = 0;
+         obstacles.forEach(o => maxX = Math.max(maxX, o.x + o.w));
+         goal.x = maxX + 200;
+         goal.y = groundY - 40;
+      }
+    }
+    // Add a safety ground at start if empty (optional, but good for empty levels)
+    if(obstacles.length === 0) {
+       addGround(0, 800);
+       goal.x = 1000;
+    }
+    return; // Skip standard generation
+  }
+
   let x = 0;
 
   // 1. Start: Safe running area
   addGround(x, 800);
   x += 800;
 
-  if(typeof currentLevel === 'string' && currentLevel.startsWith('custom_')) {
-    // Already loaded by playCustomLevel, just need to set Goal
-    let maxX = 0;
-    obstacles.forEach(o => maxX = Math.max(maxX, o.x + o.w));
-    x = maxX;
-  }
-  else if (Levels[currentLevel]) {
+  if (Levels[currentLevel]) {
     x = Levels[currentLevel](x);
+    
+    // Bonus Endurance Section (+2000px)
+    addGround(x, 500); x += 500;
+    addPlat(x, 100, 300); addCoin(x+150, 140); x += 300;
+    addGround(x, 200); x += 200;
+    addBounce(x); x += 200;
+    addPlat(x, 150, 200); addCoin(x+100, 190); x += 300;
+    addGround(x, 500); x += 500;
   }
 
   // Goal area
@@ -666,7 +931,7 @@ window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 // ... (Keep existing implementation or remove if conflicting, let's keep it for now but disable in Editor mode)
 
 // --- EDITOR LOGIC ---
-let editorMode = 'SELECT'; // SELECT, GROUND, PLAT, SPIKE, COIN, BOUNCE, SUPER, ERASER
+let editorMode = 'SELECT'; // SELECT, GROUND, PLAT, SPIKE, COIN, BOUNCE, SUPER, PORTAL, ERASER
 let selectedObj = null;
 let hoveredObj = null; // For tooltip
 let dragOffset = {x:0, y:0};
@@ -674,6 +939,14 @@ let editorCamStart = {x:0, y:0};
 let dragStart = {x:0, y:0};
 let isDraggingCam = false;
 let isDraggingObj = false;
+
+function getSnapSize(type) {
+  // Finer grid (10px) for small/precision items
+  const small = ['SPIKE','COIN','BOUNCE','SUPER','PORTAL','spike','coin','bouncePad','superBouncePad','goal'];
+  if(small.includes(type)) return 10;
+  // Coarse grid (20px) for structural items (GROUND, PLAT)
+  return 20;
+}
 
 function toggleEditor() {
   if(gameState === 'EDITING') {
@@ -698,7 +971,8 @@ function setTool(tool) {
   document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
   const map = {
     'SELECT': 'toolSelect', 'GROUND': 'toolGround', 'PLAT': 'toolPlat',
-    'SPIKE': 'toolSpike', 'COIN': 'toolCoin', 'BOUNCE': 'toolBounce', 'SUPER': 'toolSuper', 'ERASER': 'toolEraser'
+    'SPIKE': 'toolSpike', 'COIN': 'toolCoin', 'BOUNCE': 'toolBounce', 'SUPER': 'toolSuper', 
+    'PORTAL': 'toolPortal', 'ERASER': 'toolEraser'
   };
   if(map[tool]) document.getElementById(map[tool]).classList.add('active');
   selectedObj = null;
@@ -712,6 +986,7 @@ document.getElementById('toolSpike').onclick = () => setTool('SPIKE');
 document.getElementById('toolCoin').onclick = () => setTool('COIN');
 document.getElementById('toolBounce').onclick = () => setTool('BOUNCE');
 document.getElementById('toolSuper').onclick = () => setTool('SUPER');
+document.getElementById('toolPortal').onclick = () => setTool('PORTAL');
 document.getElementById('toolEraser').onclick = () => setTool('ERASER');
 
 window.clearLevel = function() {
@@ -727,11 +1002,44 @@ window.saveLevel = function() {
   const name = prompt('Name your level:', 'My Level');
   if(name) {
     const list = JSON.parse(localStorage.getItem('eyeChaseLevels') || '[]');
-    const data = { obstacles: obstacles, coins: coinObjects };
+    const data = { 
+        obstacles: obstacles, 
+        coins: coinObjects,
+        goal: {x: goal.x, y: goal.y} 
+    };
     list.push({ name, data, date: Date.now() });
     localStorage.setItem('eyeChaseLevels', JSON.stringify(list));
     alert('Level Saved!');
   }
+};
+
+window.startNewLevelEditor = function() {
+  // Reset level data
+  obstacles = [];
+  coinObjects = [];
+  addGround(0, 800);
+  
+  // Reset player & camera
+  player.x = 150; player.y = 466;
+  camera = {x: 0, y: 0};
+  
+  // Default goal
+  goal.x = 1000; goal.y = groundY - 40;
+  
+  // Switch to Editor state
+  gameState = 'EDITING';
+  
+  // Update UI
+  document.getElementById('editorUI').style.display = 'flex';
+  document.getElementById('editBtn').classList.add('active');
+  document.getElementById('editBtn').textContent = 'Stop Editing';
+  document.getElementById('pauseMenu').style.display = 'none';
+  document.getElementById('msg').style.display = 'none';
+  
+  // Ensure HUD is visible (since we might come from MENU)
+  document.querySelector('.hud').style.opacity = '1';
+  
+  Music.stop();
 };
 
 window.exportLevel = function() {
@@ -823,9 +1131,10 @@ c.addEventListener('mousedown', (e) => {
     }
   } else {
     // Place object
-    // Snap to grid (20px)
-    const gx = Math.floor(mx / 20) * 20;
-    const gy = Math.floor(my / 20) * 20;
+    // Dynamic snap based on tool
+    const snap = getSnapSize(editorMode);
+    const gx = Math.floor(mx / snap) * snap;
+    const gy = Math.floor(my / snap) * snap;
     
     if(editorMode === 'GROUND') addGround(gx, 200);
     else if(editorMode === 'PLAT') addPlat(0, groundY - gy, 100); // y param is height from ground
@@ -837,12 +1146,20 @@ c.addEventListener('mousedown', (e) => {
     else if(editorMode === 'SUPER') {
         obstacles.push({x: gx, y: gy, w: 30, h: 15, type: 'superBouncePad'});
     }
+    else if(editorMode === 'PORTAL') {
+        // Update global goal position
+        goal.x = gx + 55; // Center circle
+        goal.y = gy + 55; // Adjust for radius
+        // We don't push to obstacles/coins array, it's a global singular object
+    }
     
     // Modify the last added object to position exactly at click if needed, 
     // but add* helpers use ground-relative logic. 
     // Let's fix generic placement for non-helper types:
     if(['SPIKE','BOUNCE','SUPER'].includes(editorMode)) {
        // already pushed with gy
+    } else if(editorMode === 'PORTAL') {
+       // Handled above
     } else if(editorMode === 'GROUND') {
        // addGround uses fixed Y, let's override
        obstacles[obstacles.length-1].y = gy;
@@ -881,6 +1198,13 @@ window.addEventListener('mousemove', (e) => {
       }
     }
   }
+  
+  // Check Portal (Goal)
+  if(!hoveredObj) {
+     if(Math.hypot(goal.x - mx, goal.y - my) < goal.r) {
+        hoveredObj = goal; hoveredObj._type = 'goal';
+     }
+  }
 
   if(isDraggingCam) {
     const dx = (e.clientX - dragStart.x) * (c.width / c.clientWidth);
@@ -902,8 +1226,10 @@ window.addEventListener('mousemove', (e) => {
       selectedObj.x = mx - dragOffset.x;
       selectedObj.y = my - dragOffset.y;
     } else {
-      selectedObj.x = Math.floor((mx - dragOffset.x) / 10) * 10;
-      selectedObj.y = Math.floor((my - dragOffset.y) / 10) * 10;
+      const type = selectedObj.type || selectedObj._type;
+      const snap = getSnapSize(type);
+      selectedObj.x = Math.floor((mx - dragOffset.x) / snap) * snap;
+      selectedObj.y = Math.floor((my - dragOffset.y) / snap) * snap;
     }
   }
 });
@@ -1096,8 +1422,8 @@ function updatePlayer() {
 
     // Increased collection radius (magnet effect)
     // Was: player.w/2 + coin.r (~15 + 12 = 27)
-    // Now: player.w/2 + coin.r + 20 (~47) - much easier!
-    if(dist < player.w/2 + coin.r + 20) {
+    // Now: player.w/2 + coin.r + 50 (~77) - Super easy!
+    if(dist < player.w/2 + coin.r + 50) {
       coinsCollected.push(coin.id);
       coins++;
       document.getElementById('coins').textContent = coins;
@@ -1170,6 +1496,41 @@ if(!document.getElementById('levelList')) {
   document.querySelector('.wrap').appendChild(div);
 }
 
+// Icons UI
+if(!document.getElementById('iconList')) {
+  const div = document.createElement('div');
+  div.id = 'iconList';
+  div.className = 'overlay';
+  div.style.cssText = 'display:none;background:#0d1a2a;border:2px solid #ff00ff;padding:20px;border-radius:12px;top:50%;left:50%;transform:translate(-50%,-50%);width:320px;z-index:200';
+  div.innerHTML = `
+    <h2 style="margin-top:0;color:#ff00ff">Select Icon</h2>
+    <div id="iconGrid" style="display:grid;grid-template-columns:repeat(4, 1fr);gap:10px"></div>
+    <button onclick="document.getElementById('iconList').style.display='none'" style="margin-top:20px;background:#ff5b5b;width:100%">Close</button>
+  `;
+  document.querySelector('.wrap').appendChild(div);
+}
+
+window.openIconsMenu = function() {
+  const grid = document.getElementById('iconGrid');
+  grid.innerHTML = '';
+  
+  const icons = ['default', '😃', '😎', '😈', '👻', '👽', '🤖', '🐱', '🐶', '🐵', '🦊', '🐸', '🐼', '🦄', '🐲', '🟦', '🟥', '🟩', '🟨'];
+  
+  icons.forEach(icon => {
+    const btn = document.createElement('button');
+    btn.style.cssText = 'font-size:24px;padding:10px;background:' + (playerIcon === icon ? '#4f86ff' : '#1b2a44');
+    btn.innerHTML = icon === 'default' ? 'Cube' : icon;
+    btn.onclick = () => {
+      playerIcon = icon;
+      localStorage.setItem('eyeChasePlayerIcon', icon);
+      document.getElementById('iconList').style.display = 'none';
+    };
+    grid.appendChild(btn);
+  });
+  
+  document.getElementById('iconList').style.display = 'block';
+};
+
 window.openLevelList = function() {
   const list = JSON.parse(localStorage.getItem('eyeChaseLevels') || '[]');
   const content = document.getElementById('levelListContent');
@@ -1201,9 +1562,6 @@ window.playCustomLevel = function(index) {
   const list = JSON.parse(localStorage.getItem('eyeChaseLevels') || '[]');
   if(list[index]) {
     currentLevel = 'custom_' + index;
-    // Load data into global vars
-    obstacles = list[index].data.obstacles;
-    coinObjects = list[index].data.coins;
     closeLevelList();
     startGame();
   }
@@ -1263,14 +1621,24 @@ function drawMenu() {
   // "EYE"
   x.font = 'bold 120px Inter, system-ui';
   x.fillStyle = '#ff2a2a';
-  x.shadowColor = 'rgba(255, 42, 42, 0.5)';
-  x.shadowBlur = 30;
+  x.shadowColor = '#000';
+  x.shadowBlur = 0;
+  x.lineWidth = 8;
+  x.strokeStyle = '#000';
+  x.strokeText('EYE', W/2, H/2 - 60);
   x.fillText('EYE', W/2, H/2 - 60);
 
   // "CHASE"
   x.fillStyle = '#7afcff';
-  x.shadowColor = 'rgba(122, 252, 255, 0.5)';
+  x.strokeText('CHASE', W/2, H/2 + 50);
   x.fillText('CHASE', W/2, H/2 + 50);
+  
+  // Total Diamonds
+  x.font = 'bold 24px Inter, system-ui';
+  x.fillStyle = '#fff';
+  x.lineWidth = 4;
+  x.strokeText('💎 ' + totalDiamonds, W/2, H/2 + 90);
+  x.fillText('💎 ' + totalDiamonds, W/2, H/2 + 90);
 
   // Play Button
   const btnW = 200;
@@ -1291,9 +1659,32 @@ function drawMenu() {
   x.font = 'bold 28px Inter, system-ui';
   x.fillStyle = '#fff';
   x.textBaseline = 'middle';
+  x.lineWidth = 3;
+  x.strokeStyle = 'rgba(0,0,0,0.5)';
+  x.strokeText('PLAY', W/2, btnY + btnH/2);
   x.fillText('PLAY', W/2, btnY + btnH/2);
 
-  // My Levels Button
+  // Create Button (Left)
+  const createBtnX = W/2 - 280;
+  const sideBtnW = 160;
+  x.shadowBlur = 20;
+  x.shadowColor = 'rgba(122, 252, 255, 0.4)';
+  x.fillStyle = '#1b2a44';
+  x.strokeStyle = '#7afcff';
+  x.lineWidth = 2;
+  x.beginPath();
+  x.roundRect(createBtnX, btnY, sideBtnW, btnH, 30);
+  x.fill();
+  x.stroke();
+
+  x.fillStyle = '#7afcff';
+  x.font = 'bold 20px Inter, system-ui';
+  x.lineWidth = 3;
+  x.strokeStyle = 'rgba(0,0,0,0.8)';
+  x.strokeText('CREATE', createBtnX + sideBtnW/2, btnY + btnH/2);
+  x.fillText('CREATE', createBtnX + sideBtnW/2, btnY + btnH/2);
+
+  // My Levels Button (Right)
   const myBtnX = W/2 + 120;
   x.shadowBlur = 20;
   x.shadowColor = 'rgba(255, 0, 255, 0.4)';
@@ -1301,17 +1692,44 @@ function drawMenu() {
   x.strokeStyle = '#ff00ff';
   x.lineWidth = 2;
   x.beginPath();
-  x.roundRect(myBtnX, btnY, 160, btnH, 30);
+  x.roundRect(myBtnX, btnY, sideBtnW, btnH, 30);
   x.fill();
   x.stroke();
 
   x.fillStyle = '#ff00ff';
   x.font = 'bold 20px Inter, system-ui';
-  x.fillText('MY LEVELS', myBtnX + 80, btnY + btnH/2);
+  x.lineWidth = 3;
+  x.strokeStyle = 'rgba(0,0,0,0.8)';
+  x.strokeText('MY LEVELS', myBtnX + sideBtnW/2, btnY + btnH/2);
+  x.fillText('MY LEVELS', myBtnX + sideBtnW/2, btnY + btnH/2);
+
+  // Icons Button (Top Right)
+  const iconBtnX = W - 140;
+  const iconBtnY = 30;
+  x.shadowBlur = 10;
+  x.shadowColor = 'rgba(255, 255, 255, 0.3)';
+  x.fillStyle = '#1b2a44';
+  x.strokeStyle = '#fff';
+  x.lineWidth = 2;
+  x.beginPath();
+  x.roundRect(iconBtnX, iconBtnY, 110, 50, 15);
+  x.fill();
+  x.stroke();
+  
+  x.shadowBlur = 0;
+  x.fillStyle = '#fff';
+  x.font = 'bold 18px Inter, system-ui';
+  x.lineWidth = 3;
+  x.strokeStyle = 'rgba(0,0,0,0.8)';
+  x.strokeText('🙂 SKINS', iconBtnX + 55, iconBtnY + 25);
+  x.fillText('🙂 SKINS', iconBtnX + 55, iconBtnY + 25);
 
   // Credits/Controls
   x.font = '16px Inter, system-ui';
-  x.fillStyle = '#9fbff9';
+  x.fillStyle = '#fff'; // Brighter
+  x.lineWidth = 3;
+  x.strokeStyle = '#000';
+  x.strokeText('Controls: Arrows / WASD / Touch', W/2, H - 40);
   x.fillText('Controls: Arrows / WASD / Touch', W/2, H - 40);
 
   x.restore();
@@ -1326,72 +1744,119 @@ function drawLevelSelect() {
   x.fillStyle = gradient;
   x.fillRect(0, 0, W, H);
 
-  // Title
+  const info = LevelInfo[menuLevelIndex];
+  const isLocked = false; // Logic for locking could go here
+
+  // 1. Level Name (Title)
   x.save();
   x.textAlign = 'center';
+  x.shadowBlur = 20;
+  x.shadowColor = info.color;
+  x.fillStyle = '#fff';
+  x.font = 'bold 60px Inter, system-ui';
+  x.lineWidth = 4;
+  x.strokeStyle = '#000';
+  x.strokeText(info.name, W/2, H/2 - 140);
+  x.fillText(info.name, W/2, H/2 - 140);
+
+  // 2. Difficulty Face / Label
+  x.font = 'bold 30px Inter, system-ui';
+  x.fillStyle = info.color;
+  x.lineWidth = 3;
+  x.strokeText(info.diff, W/2, H/2 - 90);
+  x.fillText(info.diff, W/2, H/2 - 90);
+  
+  // 3. Description
+  x.font = 'italic 20px Inter, system-ui';
+  x.fillStyle = '#eee'; // Brighter
+  x.shadowBlur = 0;
+  x.lineWidth = 3;
+  x.strokeText(info.desc, W/2, H/2 - 50);
+  x.fillText(info.desc, W/2, H/2 - 50);
+
+  // 4. Stats (Diamonds)
+  const levelId = menuLevelIndex.toString();
+  const completed = completedLevels.includes(levelId);
+  const reward = menuLevelIndex * 10;
+  
+  x.font = '24px Inter, system-ui';
+  x.lineWidth = 3;
+  x.strokeStyle = '#000';
+  if(completed) {
+      x.fillStyle = '#4f86ff'; // Blue for completed
+      x.strokeText(`Completed! (Reward: ${reward} 💎)`, W/2, H/2 - 10);
+      x.fillText(`Completed! (Reward: ${reward} 💎)`, W/2, H/2 - 10);
+  } else {
+      x.fillStyle = '#7afcff';
+      x.strokeText(`Reward: ${reward} 💎`, W/2, H/2 - 10);
+      x.fillText(`Reward: ${reward} 💎`, W/2, H/2 - 10);
+  }
+
+  // 5. Central Play Button
+  const btnW = 200;
+  const btnH = 80;
+  const btnX = W/2 - btnW/2;
+  const btnY = H/2 + 40;
+
+  x.shadowBlur = 20;
+  x.shadowColor = info.color;
+  x.fillStyle = '#1b2a44';
+  x.beginPath();
+  x.roundRect(btnX, btnY, btnW, btnH, 40);
+  x.fill();
+  x.strokeStyle = info.color;
+  x.lineWidth = 3;
+  x.stroke();
+
+  x.shadowBlur = 0;
+  x.fillStyle = '#fff';
+  x.font = 'bold 36px Inter, system-ui';
+  x.textBaseline = 'middle';
+  x.lineWidth = 3;
+  x.strokeStyle = 'rgba(0,0,0,0.5)';
+  x.strokeText('PLAY', W/2, btnY + btnH/2);
+  x.fillText('PLAY', W/2, btnY + btnH/2);
+
+  // 6. Navigation Arrows (<  >)
   x.font = 'bold 60px Inter, system-ui';
   x.fillStyle = '#fff';
-  x.fillText('Select Level', W/2, H/2 - 120);
-
-  // Level Buttons Grid
-  const btnW = 140;
-  const btnH = 80;
-  const gap = 20;
-  const cols = 3;
-  const startX = W/2 - (cols * btnW + (cols-1)*gap)/2;
-  const startY = H/2 - 20;
-
-  for(let i = 1; i <= 5; i++) {
-    const col = (i-1) % cols;
-    const row = Math.floor((i-1) / cols);
-    const btnX = startX + col * (btnW + gap);
-    const btnY = startY + row * (btnH + gap);
-
-    x.shadowBlur = 10;
-    x.shadowColor = 'rgba(122, 252, 255, 0.3)';
-    x.fillStyle = '#1b2a44';
-    x.beginPath();
-    x.roundRect(btnX, btnY, btnW, btnH, 15);
-    x.fill();
-
-    x.strokeStyle = '#7afcff';
-    x.lineWidth = 2;
-    x.stroke();
-
-    x.shadowBlur = 0;
-    x.fillStyle = '#7afcff';
-    x.font = 'bold 28px Inter, system-ui';
-    x.textBaseline = 'middle';
-    x.fillText('Lvl ' + i, btnX + btnW/2, btnY + btnH/2);
+  x.lineWidth = 4;
+  x.strokeStyle = '#000';
+  
+  // Left Arrow
+  if(menuLevelIndex > 1) {
+    x.strokeText('<', W/2 - 200, H/2 + 80);
+    x.fillText('<', W/2 - 200, H/2 + 80);
+  }
+  
+  // Right Arrow
+  if(menuLevelIndex < 22) {
+    x.strokeText('>', W/2 + 200, H/2 + 80);
+    x.fillText('>', W/2 + 200, H/2 + 80);
   }
 
-  // Custom Level Button
-  if(localStorage.getItem('eyeChaseCustomLevel')) {
-    const btnX = startX + 1 * (btnW + gap); // Middle col
-    const btnY = startY + 2 * (btnH + gap); // Row 3
-    
-    x.shadowBlur = 10;
-    x.shadowColor = 'rgba(255, 0, 255, 0.3)';
-    x.fillStyle = '#2a1b44';
-    x.beginPath();
-    x.roundRect(btnX, btnY, btnW, btnH, 15);
-    x.fill();
+  // 7. Page Indicator (Dots)
+  // Adjusted for many levels - maybe show just a progress bar or number if > 10?
+  // Let's switch to "Page X / 22" text for cleaner UI
+  x.font = '20px Inter, system-ui';
+  x.fillStyle = '#fff'; // Brighter
+  x.lineWidth = 3;
+  x.strokeText(`${menuLevelIndex} / 22`, W/2, H - 80);
+  x.fillText(`${menuLevelIndex} / 22`, W/2, H - 80);
+  
+  /* Dots removed for scalability
+  const dotSize = 10;
+  const dotGap = 20;
+  */
 
-    x.strokeStyle = '#ff00ff';
-    x.lineWidth = 2;
-    x.stroke();
-
-    x.shadowBlur = 0;
-    x.fillStyle = '#ff00ff';
-    x.font = 'bold 28px Inter, system-ui';
-    x.fillText('Custom', btnX + btnW/2, btnY + btnH/2);
-  }
+  x.restore();
 
   // Back Button (Red Cross)
   const backX = 30;
   const backY = 30;
   const backSize = 40;
 
+  x.save();
   x.fillStyle = '#ff5b5b';
   x.shadowColor = 'rgba(255, 91, 91, 0.5)';
   x.shadowBlur = 10;
@@ -1411,7 +1876,6 @@ function drawLevelSelect() {
   x.moveTo(backX + backSize - pad, backY + pad);
   x.lineTo(backX + pad, backY + backSize - pad);
   x.stroke();
-
   x.restore();
 }
 
@@ -1651,14 +2115,51 @@ function draw() {
   x.save();
   x.translate(player.x + player.w/2, player.y + player.h/2);
   x.rotate(player.rotation);
+  
+  // 1. Outer Border (Black Outline)
+  x.fillStyle = '#000';
+  x.fillRect(-player.w/2 - 2, -player.h/2 - 2, player.w + 4, player.h + 4);
+
+  // 2. Main Body Gradient (Primary Color)
   const playerGradient = x.createLinearGradient(-player.w/2, -player.h/2, player.w/2, player.h/2);
-  playerGradient.addColorStop(0, '#7afcff');
-  playerGradient.addColorStop(1, '#5d9cff');
+  playerGradient.addColorStop(0, '#7afcff'); // Cyan
+  playerGradient.addColorStop(1, '#008cff'); // Blue
   x.fillStyle = playerGradient;
   x.fillRect(-player.w/2, -player.h/2, player.w, player.h);
-  x.strokeStyle = 'rgba(255,255,255,0.35)';
-  x.lineWidth = 2;
-  x.strokeRect(-player.w/2, -player.h/2, player.w, player.h);
+
+  // 3. Inner Frame/Border (Inset)
+  x.strokeStyle = 'rgba(0,0,0,0.2)';
+  x.lineWidth = 3;
+  x.strokeRect(-player.w/2 + 3, -player.h/2 + 3, player.w - 6, player.h - 6);
+
+  // 4. Gloss/Shine (Top Half Reflection)
+  const gloss = x.createLinearGradient(0, -player.h/2, 0, 0);
+  gloss.addColorStop(0, 'rgba(255,255,255,0.6)');
+  gloss.addColorStop(1, 'rgba(255,255,255,0.0)');
+  x.fillStyle = gloss;
+  x.fillRect(-player.w/2, -player.h/2, player.w, player.h/2);
+
+  // 5. Face / Icon
+  if(playerIcon !== 'default' && playerIcon) {
+    x.font = '22px Arial'; // Slightly larger
+    x.textAlign = 'center';
+    x.textBaseline = 'middle';
+    
+    // Icon Outline (Black)
+    x.lineWidth = 3;
+    x.strokeStyle = '#000';
+    x.strokeText(playerIcon, 0, 2);
+    
+    // Icon Fill (White)
+    x.fillStyle = '#fff';
+    x.fillText(playerIcon, 0, 2); 
+  } else {
+    // Default Face (GD Style Square)
+    x.fillStyle = 'rgba(0,0,0,0.4)';
+    x.fillRect(-7, -7, 14, 14); // Outer dark square
+    x.fillStyle = '#afffff';
+    x.fillRect(-4, -4, 8, 8);   // Inner light square
+  }
   x.restore();
 
   // Draw eye enemy
@@ -1781,7 +2282,7 @@ function gameLoop() {
     ctx.lineWidth = 1;
     
     // Grid
-    const gridSize = 100;
+    const gridSize = 20; // Changed to 20px
     const offsetX = -camera.x % gridSize;
     const offsetY = -camera.y % gridSize;
     
@@ -1879,8 +2380,41 @@ function reachGoal() {
     localStorage.setItem('eyeChaseBestCoins', bestCoins);
     document.getElementById('bestCoins').textContent = bestCoins;
   }
+
+  // Award Diamonds
+  let reward = 0;
+  let alreadyCompleted = false;
+  
+  // Check if already completed
+  const levelId = currentLevel.toString(); // works for '1' or 'custom_0'
+  if(completedLevels.includes(levelId)) {
+     alreadyCompleted = true;
+  } else {
+     completedLevels.push(levelId);
+     localStorage.setItem('eyeChaseCompletedLevels', JSON.stringify(completedLevels));
+  }
+
+  if(!alreadyCompleted) {
+      if(typeof currentLevel === 'number') {
+        // 10, 20, ... up to 100 max
+        reward = Math.min(currentLevel * 10, 100);
+      } else {
+        // Custom levels get 5
+        reward = 5;
+      }
+      
+      totalDiamonds += reward;
+      localStorage.setItem('eyeChaseDiamonds', totalDiamonds);
+      document.getElementById('diamondDisplay').textContent = totalDiamonds;
+  }
+
+  const rewardMsg = alreadyCompleted 
+      ? `<div style="margin-bottom:20px;font-size:18px;color:#aaa">No rewards (Already Completed)</div>`
+      : `<div style="margin-bottom:20px;font-size:24px;color:#7afcff">💎 +${reward} Diamonds</div>`;
+
   document.getElementById('msg').innerHTML = `
-    <div style="margin-bottom:20px;font-size:32px;font-weight:bold">Level Complete!</div>
+    <div style="margin-bottom:10px;font-size:32px;font-weight:bold">Level Complete!</div>
+    ${rewardMsg}
     <div style="display:flex;gap:20px;justify-content:center">
       <button onclick="window.nextLevel()" style="background:#4f86ff;font-size:20px;padding:12px 24px">Next Level</button>
       <button onclick="window.toMenu()" style="background:#1b2a44;font-size:20px;padding:12px 24px">Menu</button>
@@ -1907,6 +2441,7 @@ function startGame() {
   coins = 0;
   coinsCollected = [];
   document.getElementById('coins').textContent = coins;
+  document.getElementById('diamondDisplay').textContent = totalDiamonds;
   generateLevel();
 
   gameState = 'PLAYING';
@@ -2012,45 +2547,50 @@ const checkMenuClick = (e) => {
          gameState = 'LEVEL_SELECT';
       }
       
+      // Check Create Button (W/2 - 280, btnY, 160, 60)
+      const createBtnX = W/2 - 280;
+      if(x >= createBtnX && x <= createBtnX + 160 && y >= btnY && y <= btnY + btnH) {
+         e.preventDefault();
+         startNewLevelEditor();
+      }
+      
       // Check My Levels Button (W/2 + 120, btnY, 160, 60)
       const myBtnX = W/2 + 120;
       if(x >= myBtnX && x <= myBtnX + 160 && y >= btnY && y <= btnY + btnH) {
          e.preventDefault();
          openLevelList();
       }
-   } else if(gameState === 'LEVEL_SELECT') {
-      // Grid parameters matching drawLevelSelect
-      const btnW = 140;
-      const btnH = 80;
-      const gap = 20;
-      const cols = 3;
-      const startX = W/2 - (cols * btnW + (cols-1)*gap)/2;
-      const startY = H/2 - 20;
-
-      for(let i = 1; i <= 5; i++) {
-        const col = (i-1) % cols;
-        const row = Math.floor((i-1) / cols);
-        const btnX = startX + col * (btnW + gap);
-        const btnY = startY + row * (btnH + gap);
-
-        if(x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH) {
-           e.preventDefault();
-           currentLevel = i;
-           startGame();
-           return;
-        }
+      
+      // Check Icons Button (W - 140, 30, 110, 50)
+      const iconBtnX = W - 140;
+      if(x >= iconBtnX && x <= iconBtnX + 110 && y >= 30 && y <= 30 + 50) {
+         e.preventDefault();
+         openIconsMenu();
       }
-
-      // Check Custom Button
-      if(localStorage.getItem('eyeChaseCustomLevel')) {
-        const btnX = startX + 1 * (btnW + gap);
-        const btnY = startY + 2 * (btnH + gap);
-        if(x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH) {
-           e.preventDefault();
-           currentLevel = 'custom';
-           startGame();
-           return;
-        }
+   } else if(gameState === 'LEVEL_SELECT') {
+      // Navigation Arrows
+      // Left Arrow: W/2 - 200 +/- 40
+      if(menuLevelIndex > 1 && x >= W/2 - 240 && x <= W/2 - 160 && y >= H/2 + 40 && y <= H/2 + 120) {
+          menuLevelIndex--;
+          return;
+      }
+      // Right Arrow: W/2 + 200 +/- 40
+      if(menuLevelIndex < 22 && x >= W/2 + 160 && x <= W/2 + 240 && y >= H/2 + 40 && y <= H/2 + 120) {
+          menuLevelIndex++;
+          return;
+      }
+      
+      // Central Play Button
+      const btnW = 200;
+      const btnH = 80;
+      const btnX = W/2 - btnW/2;
+      const btnY = H/2 + 40;
+      
+      if(x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH) {
+         e.preventDefault();
+         currentLevel = menuLevelIndex;
+         startGame();
+         return;
       }
 
       // Check Back Button (30, 30, 40, 40)
@@ -2075,10 +2615,10 @@ c.addEventListener('mousedown', checkMenuClick); // Also support mouse click
 
 // Global navigation functions
 window.nextLevel = function() {
-  if (currentLevel < 5) {
+  if (currentLevel < 22) {
     currentLevel++;
   } else {
-    currentLevel = 1; // Loop back to 1 for now
+    currentLevel = 1; // Loop back to 1
   }
   startGame();
 };
