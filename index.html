@@ -2233,8 +2233,11 @@ function draw() {
   x.restore();
 
   // UI
-  x.fillStyle = '#dff6ff';
-  x.font = '24px Inter, system-ui';
+  x.fillStyle = '#fff';
+  x.font = 'bold 24px Inter, system-ui';
+  x.lineWidth = 3;
+  x.strokeStyle = '#000';
+  x.strokeText('Distance: ' + Math.floor(player.x / 10), 20, 40);
   x.fillText('Distance: ' + Math.floor(player.x / 10), 20, 40);
 
   // Progress bar
@@ -2311,7 +2314,7 @@ function gameLoop() {
     ctx.restore();
     ctx.fillRect(10, H - 40, 400, 30);
     ctx.fillStyle = '#fff';
-    ctx.font = '16px monospace';
+    ctx.font = 'bold 16px monospace';
     
     let statusText = 'Mode: ' + editorMode + ' | Drag Space to Pan | Del to Remove';
     if(hoveredObj) {
